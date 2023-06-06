@@ -988,6 +988,7 @@ dependencies = [
  "rand",
  "rayon-core",
  "sparesults",
+ "spargebra",
  "url",
 ]
 
