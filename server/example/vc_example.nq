@@ -1,0 +1,76 @@
+# <urn:graph:http://example.org/vaccinationCredential/01>
+<did:example:xyz> <http://example.org/vocab/isPatientOf> <http://example.org/vaccination/01> <urn:graph:http://example.org/vaccinationCredential/01> .
+<did:example:xyz> <http://schema.org/name> "John Smith" <urn:graph:http://example.org/vaccinationCredential/01> .
+<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccination/01> <http://example.org/vocab/lotNumber> "0000001" <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccination/01> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccination/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <https://w3id.org/security#proof> _:b0 <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccinationCredential/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:graph:http://example.org/vaccinationCredential/01> .
+_:b1 <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:b0 .
+_:b1 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:b0 .
+_:b1 <https://w3id.org/security#proofValue> "mA9oePddXRZK1dTCt9iJOAPd9WabAW0rThUIP6RoLbUdPG1L5pPnRUG9BBpnFuzAZk9X1b6jApMKYEdL4Dn7/FYWZeJckHxW9vz+UVH1S7IfQDGkcW3zuR3eEVPpOot/KY1akOy29JVcl2rkkS5UVw==" _:b0 .
+_:b1 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> _:b0 .
+_:b1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b0 .
+
+# <urn:graph:http://example.org/vaccinationCredential/02>
+<did:example:xyz> <http://example.org/vocab/isPatientOf> <http://example.org/vaccination/02> <urn:graph:http://example.org/vaccinationCredential/02> .
+<did:example:xyz> <http://schema.org/name> "John Smith" <urn:graph:http://example.org/vaccinationCredential/02> .
+<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccination/02> <http://example.org/vocab/lotNumber> "1111111" <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccination/02> <http://example.org/vocab/vaccinationDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccination/02> <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccination/02> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <https://w3id.org/security#proof> _:b2 <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <https://www.w3.org/2018/credentials#issuanceDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> <urn:graph:http://example.org/vaccinationCredential/02> .
+<http://example.org/vaccinationCredential/02> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:graph:http://example.org/vaccinationCredential/02> .
+_:b3 <http://purl.org/dc/terms/created> "2023-02-03T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:b2 .
+_:b3 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:b2 .
+_:b3 <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" _:b2 .
+_:b3 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> _:b2 .
+_:b3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b2 .
+
+# <urn:graph:http://example.org/vaccinationCredential/03>
+<did:example:xyz> <http://example.org/vocab/isPatientOf> _:e1 <urn:graph:http://example.org/vaccinationCredential/03> .
+<did:example:xyz> <http://schema.org/name> "Jane Doe" <urn:graph:http://example.org/vaccinationCredential/03> .
+<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:graph:http://example.org/vaccinationCredential/03> .
+_:e1 <http://example.org/vocab/lotNumber> "1234567" <urn:graph:http://example.org/vaccinationCredential/03> .
+_:e1 <http://example.org/vocab/vaccinationDate> "2022-05-05T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/03> .
+_:e1 <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/03> .
+_:e1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <https://w3id.org/security#proof> _:b6 <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <https://www.w3.org/2018/credentials#issuanceDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <urn:graph:http://example.org/vaccinationCredential/03> .
+<http://example.org/vaccinationCredential/03> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:graph:http://example.org/vaccinationCredential/03> .
+_:b7 <http://purl.org/dc/terms/created> "2023-05-05T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:b6 .
+_:b7 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:b6 .
+_:b7 <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" _:b6 .
+_:b7 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> _:b6 .
+_:b7 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b6 .
+
+# <urn:graph:http://example.org/vaccineInfoCredentials/987>
+<http://example.org/vaccine/987> <http://schema.org/manufacturer> <http://example.org/awesomeCompany> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccine/987> <http://schema.org/name> "AwesomeVaccine" <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccine/987> <http://schema.org/status> "active" <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccine/987> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <https://w3id.org/security#proof> _:b4 <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer2> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+<http://example.org/vaccineInfoCredentials/987> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:graph:http://example.org/vaccineInfoCredentials/987> .
+_:b5 <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:b4 .
+_:b5 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:b4 .
+_:b5 <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" _:b4 .
+_:b5 <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> _:b4 .
+_:b5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b4 .
