@@ -2,18 +2,24 @@
 use anyhow::{anyhow, bail, Context, Error};
 use clap::{Parser, Subcommand};
 use flate2::read::MultiGzDecoder;
-use oxhttp::model::{Body, HeaderName, HeaderValue, Method, Request, Response, Status};
-use oxhttp::Server;
-use oxigraph::io::{DatasetFormat, DatasetSerializer, GraphFormat, GraphSerializer};
-use oxigraph::model::{
-    GraphName, GraphNameRef, IriParseError, NamedNode, NamedNodeRef, NamedOrBlankNode,
+use oxhttp::{
+    model::{Body, HeaderName, HeaderValue, Method, Request, Response, Status},
+    Server,
 };
-use oxigraph::sparql::{Query, QueryOptions, QueryResults, Update};
-use oxigraph::store::{BulkLoader, LoaderError, Store};
+use oxigraph::{
+    io::{DatasetFormat, DatasetSerializer, GraphFormat, GraphSerializer},
+    model::{GraphName, GraphNameRef, IriParseError, NamedNode, NamedNodeRef, NamedOrBlankNode},
+    sparql::{Query, QueryOptions, QueryResults, Update},
+    store::{BulkLoader, LoaderError, Store},
+};
 use oxiri::Iri;
 use rand::random;
 use rayon_core::ThreadPoolBuilder;
 use sparesults::{QueryResultsFormat, QueryResultsSerializer};
+use spargebra::{
+    algebra::{Expression, GraphPattern, QueryDataset},
+    term::{TriplePattern, Variable},
+};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::{max, min};
@@ -882,6 +888,43 @@ fn handle_request(
                 Err(unsupported_media_type(&content_type))
             }
         }
+        ("/zkquery", "GET") => {
+            configure_and_evaluate_zksparql_query(&store, &[url_query(request)], None, request)
+        }
+        ("/zkquery", "POST") => {
+            let content_type =
+                content_type(request).ok_or_else(|| bad_request("No Content-Type given"))?;
+            if content_type == "application/sparql-query" {
+                // TODO: application/zk-sparql-query ???
+                let mut buffer = String::new();
+                request
+                    .body_mut()
+                    .take(MAX_SPARQL_BODY_SIZE)
+                    .read_to_string(&mut buffer)
+                    .map_err(bad_request)?;
+                configure_and_evaluate_zksparql_query(
+                    &store,
+                    &[url_query(request)],
+                    Some(buffer),
+                    request,
+                )
+            } else if content_type == "application/x-www-form-urlencoded" {
+                let mut buffer = Vec::new();
+                request
+                    .body_mut()
+                    .take(MAX_SPARQL_BODY_SIZE)
+                    .read_to_end(&mut buffer)
+                    .map_err(bad_request)?;
+                configure_and_evaluate_zksparql_query(
+                    &store,
+                    &[url_query(request), &buffer],
+                    None,
+                    request,
+                )
+            } else {
+                Err(unsupported_media_type(&content_type))
+            }
+        }
         ("/update", "POST") => {
             if read_only {
                 return Err(the_server_is_read_only());
@@ -1121,6 +1164,167 @@ fn url_query_parameter<'a>(request: &'a Request, param: &str) -> Option<Cow<'a, 
         .query_pairs()
         .find(|(k, _)| k == param)
         .map(|(_, v)| v)
+}
+
+fn configure_and_evaluate_zksparql_query(
+    store: &Store,
+    encoded: &[&[u8]],
+    mut query: Option<String>,
+    request: &Request,
+) -> Result<Response, HttpError> {
+    for encoded in encoded {
+        for (k, v) in form_urlencoded::parse(encoded) {
+            if let "query" = k.as_ref() {
+                if query.is_some() {
+                    return Err(bad_request("Multiple query parameters provided"));
+                }
+                query = Some(v.into_owned())
+            }
+        }
+    }
+    let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
+    evaluate_zksparql_query(store, &query, request)
+}
+
+fn evaluate_zksparql_query(
+    store: &Store,
+    query: &str,
+    request: &Request,
+) -> Result<Response, HttpError> {
+    // 1. parse and validate zk-SPARQL query
+    let parsed_query = spargebra::Query::parse(query, Some(&base_url(request)))
+        .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
+    let parsed_zk_query = match parsed_query {
+        spargebra::Query::Construct { .. } => {
+            return Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
+        }
+        spargebra::Query::Describe { .. } => {
+            return Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
+        }
+        spargebra::Query::Select {
+            dataset,
+            pattern,
+            base_iri,
+        } => evaluate_zksparql_query_select(dataset, pattern, base_iri),
+        spargebra::Query::Ask {
+            dataset,
+            pattern,
+            base_iri,
+        } => evaluate_zksparql_query_ask(dataset, pattern, base_iri),
+    }?;
+
+    println!("parsed_zk_query: {:#?}", parsed_zk_query);
+
+    // 2. construct internal SPARQL query
+    // let internal_query_patterns = parsed_zk_query.patterns.iter().map(|triple_pattern| )
+    let internal_query = spargebra::Query::Select {
+        dataset: Some(QueryDataset {
+            default: vec![],
+            named: None,
+        }),
+        pattern: GraphPattern::Bgp {
+            patterns: parsed_zk_query.patterns,
+        },
+        base_iri: None,
+    };
+
+    // 3. execute internal query to get extended solutions
+    let results = store.query(internal_query).map_err(internal_server_error)?;
+
+    // 4. return query results
+    match results {
+        QueryResults::Solutions(solutions) => {
+            let format = query_results_content_negotiation(request)?;
+            ReadForWrite::build_response(
+                move |w| {
+                    Ok((
+                        QueryResultsSerializer::from_format(format)
+                            .solutions_writer(w, solutions.variables().to_vec())?,
+                        solutions,
+                    ))
+                },
+                |(mut writer, mut solutions)| {
+                    Ok(if let Some(solution) = solutions.next() {
+                        writer.write(&solution?)?;
+                        Some((writer, solutions))
+                    } else {
+                        writer.finish()?;
+                        None
+                    })
+                },
+                format.media_type(),
+            )
+        }
+        _ => Err(bad_request("invalid query results")),
+    }
+}
+
+#[derive(Debug)]
+struct ParsedZkQuery {
+    variables: Vec<Variable>,
+    patterns: Vec<TriplePattern>,
+    filter: Option<Expression>,
+}
+
+fn evaluate_zksparql_query_select(
+    _dataset: Option<QueryDataset>,
+    pattern: GraphPattern,
+    _base_iri: Option<Iri<String>>,
+) -> Result<ParsedZkQuery, HttpError> {
+    // println!("dataset: {:#?}", dataset);
+    println!("pattern: {:#?}", pattern);
+    // println!("base_iri: {:#?}", base_iri);
+
+    match pattern {
+        GraphPattern::Project { inner, variables } => match *inner {
+            GraphPattern::Filter { expr, inner } => match *inner {
+                GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+                    variables,
+                    patterns,
+                    filter: Some(expr),
+                }),
+                _ => Err(bad_request("FILTER must be used with a single BGP")),
+            },
+            GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+                variables,
+                patterns,
+                filter: None,
+            }),
+            _ => Err(bad_request(
+                "SELECT query must consist of a single BGP, possibly with FILTER",
+            )),
+        },
+        _ => Err(bad_request("invalid SELECT query")),
+    }
+}
+
+fn evaluate_zksparql_query_ask(
+    _dataset: Option<QueryDataset>,
+    pattern: GraphPattern,
+    _base_iri: Option<Iri<String>>,
+) -> Result<ParsedZkQuery, HttpError> {
+    // println!("dataset: {:#?}", dataset);
+    println!("pattern: {:#?}", pattern);
+    // println!("base_iri: {:#?}", base_iri);
+
+    match pattern {
+        GraphPattern::Filter { expr, inner } => match *inner {
+            GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+                variables: vec![],
+                patterns,
+                filter: Some(expr),
+            }),
+            _ => Err(bad_request("FILTER must be used with a single BGP")),
+        },
+        GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+            variables: vec![],
+            patterns,
+            filter: None,
+        }),
+        _ => Err(bad_request(
+            "ASK query must consist of a single BGP, possibly with FILTER",
+        )),
+    }
 }
 
 fn configure_and_evaluate_sparql_query(
