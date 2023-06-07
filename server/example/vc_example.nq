@@ -5,6 +5,7 @@
 <http://example.org/vaccination/01> <http://example.org/vocab/lotNumber> "0000001" <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccination/01> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/01> .
+<http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/654> <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccination/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccinationCredential/01> <https://w3id.org/security#proof> _:b0 <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:graph:http://example.org/vaccinationCredential/01> .
@@ -74,3 +75,20 @@ _:b5 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#asserti
 _:b5 <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" _:b4 .
 _:b5 <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> _:b4 .
 _:b5 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b4 .
+
+# <urn:graph:http://example.org/vaccineInfoCredentials/654>
+<http://example.org/vaccine/654> <http://schema.org/manufacturer> <http://example.org/anotherCompany> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccine/654> <http://schema.org/name> "AnotherVaccine" <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccine/654> <http://schema.org/status> "inactive" <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccine/654> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccine> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <https://w3id.org/security#proof> _:b8 <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/654> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+<http://example.org/vaccineInfoCredentials/654> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:graph:http://example.org/vaccineInfoCredentials/654> .
+_:b9 <http://purl.org/dc/terms/created> "2023-03-03T11:22:33Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:b8 .
+_:b9 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:b8 .
+_:b9 <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" _:b8 .
+_:b9 <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> _:b8 .
+_:b9 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://zkp-ld.org/security#BbsTermwiseSignature2021> _:b8 .
