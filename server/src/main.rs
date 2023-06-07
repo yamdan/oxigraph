@@ -18,9 +18,8 @@ use rayon_core::ThreadPoolBuilder;
 use sparesults::{QueryResultsFormat, QueryResultsSerializer};
 use spargebra::{
     algebra::{Expression, GraphPattern, QueryDataset},
-    term::{TriplePattern, Variable},
+    term::{NamedNodePattern, TriplePattern, Variable},
 };
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::{max, min};
 #[cfg(target_os = "linux")]
@@ -35,6 +34,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
+use std::{borrow::Cow, collections::HashSet};
 use std::{fmt, fs, str};
 use url::form_urlencoded;
 
@@ -1191,7 +1191,7 @@ fn evaluate_zksparql_query(
     query: &str,
     request: &Request,
 ) -> Result<Response, HttpError> {
-    // 1. parse and validate zk-SPARQL query
+    // 1. parse and validate a zk-SPARQL query
     let parsed_query = spargebra::Query::parse(query, Some(&base_url(request)))
         .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
     let parsed_zk_query = match parsed_query {
@@ -1215,21 +1215,49 @@ fn evaluate_zksparql_query(
 
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. construct internal SPARQL query
-    // let internal_query_patterns = parsed_zk_query.patterns.iter().map(|triple_pattern| )
-    let internal_query = spargebra::Query::Select {
-        dataset: Some(QueryDataset {
-            default: vec![],
-            named: None,
-        }),
-        pattern: GraphPattern::Bgp {
-            patterns: parsed_zk_query.patterns,
+    // 2. construct an extended query to identify credentials to be disclosed
+    // TODO: replace the variable prefix `ggggg` with randomized one
+    let mut extended_variables: Vec<_> = (0..parsed_zk_query.patterns.len())
+        .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
+        .collect();
+    extended_variables.extend(parsed_zk_query.in_scope_variables.into_iter());
+
+    let extended_query_patterns = parsed_zk_query
+        .patterns
+        .into_iter()
+        .enumerate()
+        .map(|(i, triple_pattern)| {
+            let v = extended_variables
+                .get(i)
+                .ok_or(bad_request("extended_variables: out of index"))?;
+            Ok(GraphPattern::Graph {
+                name: NamedNodePattern::Variable(v.clone()),
+                inner: Box::new(GraphPattern::Bgp {
+                    patterns: vec![triple_pattern],
+                }),
+            })
+        })
+        .collect::<Result<Vec<GraphPattern>, _>>()?
+        .into_iter()
+        .reduce(|left, right| GraphPattern::Join {
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+        .unwrap_or_default();
+
+    let extended_query = spargebra::Query::Select {
+        dataset: None,
+        pattern: GraphPattern::Project {
+            inner: Box::new(extended_query_patterns),
+            variables: extended_variables,
         },
         base_iri: None,
     };
 
-    // 3. execute internal query to get extended solutions
-    let results = store.query(internal_query).map_err(internal_server_error)?;
+    println!("extended_query: {:#?}", extended_query);
+
+    // 3. execute the extended query to get extended solutions
+    let results = store.query(extended_query).map_err(internal_server_error)?;
 
     // 4. return query results
     match results {
@@ -1261,7 +1289,8 @@ fn evaluate_zksparql_query(
 
 #[derive(Debug)]
 struct ParsedZkQuery {
-    variables: Vec<Variable>,
+    disclosed_variables: Vec<Variable>,
+    in_scope_variables: HashSet<Variable>,
     patterns: Vec<TriplePattern>,
     filter: Option<Expression>,
 }
@@ -1276,24 +1305,32 @@ fn evaluate_zksparql_query_select(
     // println!("base_iri: {:#?}", base_iri);
 
     match pattern {
-        GraphPattern::Project { inner, variables } => match *inner {
-            GraphPattern::Filter { expr, inner } => match *inner {
+        GraphPattern::Project { inner, variables } => {
+            let mut in_scope_variables = HashSet::new();
+            inner.on_in_scope_variable(|v| {
+                in_scope_variables.insert(v.clone());
+            });
+            match *inner {
+                GraphPattern::Filter { expr, inner } => match *inner {
+                    GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+                        disclosed_variables: variables,
+                        in_scope_variables,
+                        patterns,
+                        filter: Some(expr),
+                    }),
+                    _ => Err(bad_request("FILTER must be used with a single BGP")),
+                },
                 GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
-                    variables,
+                    disclosed_variables: variables,
+                    in_scope_variables,
                     patterns,
-                    filter: Some(expr),
+                    filter: None,
                 }),
-                _ => Err(bad_request("FILTER must be used with a single BGP")),
-            },
-            GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
-                variables,
-                patterns,
-                filter: None,
-            }),
-            _ => Err(bad_request(
-                "SELECT query must consist of a single BGP, possibly with FILTER",
-            )),
-        },
+                _ => Err(bad_request(
+                    "SELECT query must consist of a single BGP, possibly with FILTER",
+                )),
+            }
+        }
         _ => Err(bad_request("invalid SELECT query")),
     }
 }
@@ -1307,17 +1344,23 @@ fn evaluate_zksparql_query_ask(
     println!("pattern: {:#?}", pattern);
     // println!("base_iri: {:#?}", base_iri);
 
+    let mut in_scope_variables = HashSet::new();
+    pattern.on_in_scope_variable(|v| {
+        in_scope_variables.insert(v.clone());
+    });
     match pattern {
         GraphPattern::Filter { expr, inner } => match *inner {
             GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
-                variables: vec![],
+                disclosed_variables: vec![],
+                in_scope_variables,
                 patterns,
                 filter: Some(expr),
             }),
             _ => Err(bad_request("FILTER must be used with a single BGP")),
         },
         GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
-            variables: vec![],
+            disclosed_variables: vec![],
+            in_scope_variables,
             patterns,
             filter: None,
         }),
