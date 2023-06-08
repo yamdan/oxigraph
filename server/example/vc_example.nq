@@ -1,12 +1,12 @@
 # <urn:graph:http://example.org/vaccinationCredential/01>
-<did:example:xyz> <http://example.org/vocab/isPatientOf> <http://example.org/vaccination/01> <urn:graph:http://example.org/vaccinationCredential/01> .
+<did:example:xyz> <http://example.org/vocab/isPatientOf> _:e0 <urn:graph:http://example.org/vaccinationCredential/01> .
 <did:example:xyz> <http://schema.org/name> "John Smith" <urn:graph:http://example.org/vaccinationCredential/01> .
 <did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:graph:http://example.org/vaccinationCredential/01> .
-<http://example.org/vaccination/01> <http://example.org/vocab/lotNumber> "0000001" <urn:graph:http://example.org/vaccinationCredential/01> .
-<http://example.org/vaccination/01> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
-<http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/01> .
-<http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/654> <urn:graph:http://example.org/vaccinationCredential/01> .
-<http://example.org/vaccination/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/01> .
+_:e0 <http://example.org/vocab/lotNumber> "0000001" <urn:graph:http://example.org/vaccinationCredential/01> .
+_:e0 <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
+_:e0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/987> <urn:graph:http://example.org/vaccinationCredential/01> .
+_:e0 <http://example.org/vocab/vaccine> <http://example.org/vaccine/654> <urn:graph:http://example.org/vaccinationCredential/01> .
+_:e0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccinationCredential/01> <https://w3id.org/security#proof> _:b0 <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:graph:http://example.org/vaccinationCredential/01> .
 <http://example.org/vaccinationCredential/01> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:graph:http://example.org/vaccinationCredential/01> .
