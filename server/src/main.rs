@@ -1186,81 +1186,32 @@ fn configure_and_evaluate_zksparql_query(
     evaluate_zksparql_query(store, &query, request)
 }
 
+#[derive(Debug)]
+struct ParsedZkQuery {
+    disclosed_variables: Vec<Variable>,
+    in_scope_variables: HashSet<Variable>,
+    patterns: Vec<TriplePattern>,
+    filter: Option<Expression>,
+}
+
 fn evaluate_zksparql_query(
     store: &Store,
     query: &str,
     request: &Request,
 ) -> Result<Response, HttpError> {
-    // 1. parse and validate a zk-SPARQL query
-    let parsed_query = spargebra::Query::parse(query, Some(&base_url(request)))
-        .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
-    let parsed_zk_query = match parsed_query {
-        spargebra::Query::Construct { .. } => {
-            return Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
-        }
-        spargebra::Query::Describe { .. } => {
-            return Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
-        }
-        spargebra::Query::Select {
-            dataset,
-            pattern,
-            base_iri,
-        } => evaluate_zksparql_query_select(dataset, pattern, base_iri),
-        spargebra::Query::Ask {
-            dataset,
-            pattern,
-            base_iri,
-        } => evaluate_zksparql_query_ask(dataset, pattern, base_iri),
-    }?;
-
+    // 1. parse a zk-SPARQL query
+    let parsed_zk_query = parse_zksparql(query, request)?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
     // 2. construct an extended query to identify credentials to be disclosed
-    // TODO: replace the variable prefix `ggggg` with randomized one
-    let mut extended_variables: Vec<_> = (0..parsed_zk_query.patterns.len())
-        .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
-        .collect();
-    extended_variables.extend(parsed_zk_query.in_scope_variables.into_iter());
-
-    let extended_query_patterns = parsed_zk_query
-        .patterns
-        .into_iter()
-        .enumerate()
-        .map(|(i, triple_pattern)| {
-            let v = extended_variables
-                .get(i)
-                .ok_or(bad_request("extended_variables: out of index"))?;
-            Ok(GraphPattern::Graph {
-                name: NamedNodePattern::Variable(v.clone()),
-                inner: Box::new(GraphPattern::Bgp {
-                    patterns: vec![triple_pattern],
-                }),
-            })
-        })
-        .collect::<Result<Vec<GraphPattern>, _>>()?
-        .into_iter()
-        .reduce(|left, right| GraphPattern::Join {
-            left: Box::new(left),
-            right: Box::new(right),
-        })
-        .unwrap_or_default();
-
-    let extended_query = spargebra::Query::Select {
-        dataset: None,
-        pattern: GraphPattern::Project {
-            inner: Box::new(extended_query_patterns),
-            variables: extended_variables,
-        },
-        base_iri: None,
-    };
-
+    let extended_query = construct_extended_query(parsed_zk_query)?;
     println!("extended_query: {:#?}", extended_query);
 
     // 3. execute the extended query to get extended solutions
-    let results = store.query(extended_query).map_err(internal_server_error)?;
+    let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
     // 4. return query results
-    match results {
+    match extended_results {
         QueryResults::Solutions(solutions) => {
             let format = query_results_content_negotiation(request)?;
             ReadForWrite::build_response(
@@ -1287,22 +1238,36 @@ fn evaluate_zksparql_query(
     }
 }
 
-#[derive(Debug)]
-struct ParsedZkQuery {
-    disclosed_variables: Vec<Variable>,
-    in_scope_variables: HashSet<Variable>,
-    patterns: Vec<TriplePattern>,
-    filter: Option<Expression>,
+// parse a zk-SPARQL query
+fn parse_zksparql(query: &str, request: &Request) -> Result<ParsedZkQuery, HttpError> {
+    let parsed_query = spargebra::Query::parse(query, Some(&base_url(request)))
+        .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
+    match parsed_query {
+        spargebra::Query::Construct { .. } => {
+            return Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
+        }
+        spargebra::Query::Describe { .. } => {
+            return Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
+        }
+        spargebra::Query::Select {
+            dataset,
+            pattern,
+            base_iri,
+        } => parse_zksparql_select(dataset, pattern, base_iri),
+        spargebra::Query::Ask {
+            dataset,
+            pattern,
+            base_iri,
+        } => parse_zksparql_ask(dataset, pattern, base_iri),
+    }
 }
 
-fn evaluate_zksparql_query_select(
+fn parse_zksparql_select(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
 ) -> Result<ParsedZkQuery, HttpError> {
-    // println!("dataset: {:#?}", dataset);
-    println!("pattern: {:#?}", pattern);
-    // println!("base_iri: {:#?}", base_iri);
+    println!("original pattern: {:#?}", pattern);
 
     match pattern {
         GraphPattern::Project { inner, variables } => {
@@ -1335,14 +1300,12 @@ fn evaluate_zksparql_query_select(
     }
 }
 
-fn evaluate_zksparql_query_ask(
+fn parse_zksparql_ask(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
 ) -> Result<ParsedZkQuery, HttpError> {
-    // println!("dataset: {:#?}", dataset);
-    println!("pattern: {:#?}", pattern);
-    // println!("base_iri: {:#?}", base_iri);
+    println!("original pattern: {:#?}", pattern);
 
     let mut in_scope_variables = HashSet::new();
     pattern.on_in_scope_variable(|v| {
@@ -1368,6 +1331,58 @@ fn evaluate_zksparql_query_ask(
             "ASK query must consist of a single BGP, possibly with FILTER",
         )),
     }
+}
+
+// construct an extended query to identify credentials to be disclosed
+fn construct_extended_query(query: ParsedZkQuery) -> Result<spargebra::Query, HttpError> {
+    // TODO: replace the variable prefix `ggggg` with randomized one
+    let extended_graph_variables: Vec<_> = (0..query.patterns.len())
+        .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
+        .collect();
+    let extended_basic_graph_pattern = query
+        .patterns
+        .into_iter()
+        .enumerate()
+        .map(|(i, triple_pattern)| {
+            let v = extended_graph_variables
+                .get(i)
+                .ok_or(bad_request("extended_variables: out of index"))?;
+            Ok(GraphPattern::Graph {
+                name: NamedNodePattern::Variable(v.clone()),
+                inner: Box::new(GraphPattern::Bgp {
+                    patterns: vec![triple_pattern],
+                }),
+            })
+        })
+        .collect::<Result<Vec<GraphPattern>, _>>()?
+        .into_iter()
+        .reduce(|left, right| GraphPattern::Join {
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+        .unwrap_or_default();
+
+    let extended_graph_pattern = match query.filter {
+        Some(filter) => GraphPattern::Filter {
+            expr: filter,
+            inner: Box::new(extended_basic_graph_pattern),
+        },
+        None => extended_basic_graph_pattern,
+    };
+
+    let mut extended_variables: Vec<_> = query.in_scope_variables.into_iter().collect();
+    extended_variables.extend(extended_graph_variables.into_iter());
+
+    Ok(spargebra::Query::Select {
+        dataset: None,
+        pattern: GraphPattern::Distinct {
+            inner: Box::new(GraphPattern::Project {
+                inner: Box::new(extended_graph_pattern),
+                variables: extended_variables,
+            }),
+        },
+        base_iri: None,
+    })
 }
 
 fn configure_and_evaluate_sparql_query(
