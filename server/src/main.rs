@@ -1186,16 +1186,26 @@ fn configure_and_evaluate_zksparql_query(
     evaluate_zksparql_query(store, &query, request)
 }
 
-#[derive(Debug)]
-struct ParsedZkQuery {
+#[derive(Debug, Default)]
+struct ZkQuery {
     disclosed_variables: Vec<Variable>,
     in_scope_variables: HashSet<Variable>,
     patterns: Vec<TriplePattern>,
     filter: Option<Expression>,
-    values_variables: Option<Vec<Variable>>,
-    values_bindings: Option<Vec<Vec<Option<GroundTerm>>>>,
-    limit_start: Option<usize>,
-    limit_length: Option<usize>,
+    values: Option<ZkQueryValues>,
+    limit: Option<ZkQueryLimit>,
+}
+
+#[derive(Debug, Default)]
+struct ZkQueryValues {
+    variables: Vec<Variable>,
+    bindings: Vec<Vec<Option<GroundTerm>>>,
+}
+
+#[derive(Debug, Default)]
+struct ZkQueryLimit {
+    start: usize,
+    length: Option<usize>,
 }
 
 fn evaluate_zksparql_query(
@@ -1214,7 +1224,9 @@ fn evaluate_zksparql_query(
     // 3. execute the extended query to get extended solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
-    // 4. return query results
+    // 4. generate VP if required
+
+    // 5. return query results
     match extended_results {
         QueryResults::Solutions(solutions) => {
             let format = query_results_content_negotiation(request)?;
@@ -1243,15 +1255,15 @@ fn evaluate_zksparql_query(
 }
 
 // parse a zk-SPARQL query
-fn parse_zk_query(query: &str, request: &Request) -> Result<ParsedZkQuery, HttpError> {
+fn parse_zk_query(query: &str, request: &Request) -> Result<ZkQuery, HttpError> {
     let parsed_query = spargebra::Query::parse(query, Some(&base_url(request)))
         .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
     match parsed_query {
         spargebra::Query::Construct { .. } => {
-            return Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
+            Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
         }
         spargebra::Query::Describe { .. } => {
-            return Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
+            Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
         }
         spargebra::Query::Select {
             dataset,
@@ -1270,7 +1282,7 @@ fn parse_zk_select(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
-) -> Result<ParsedZkQuery, HttpError> {
+) -> Result<ZkQuery, HttpError> {
     println!("original pattern: {:#?}", pattern);
 
     match pattern {
@@ -1280,13 +1292,11 @@ fn parse_zk_select(
             length,
         } => match *inner {
             GraphPattern::Project { inner, variables } => {
-                parse_zk_common(*inner, variables, Some(start), length)
+                parse_zk_common(*inner, variables, Some(ZkQueryLimit { start, length }))
             }
             _ => Err(bad_request("invalid SELECT query")),
         },
-        GraphPattern::Project { inner, variables } => {
-            parse_zk_common(*inner, variables, None, None)
-        }
+        GraphPattern::Project { inner, variables } => parse_zk_common(*inner, variables, None),
         _ => Err(bad_request("invalid SELECT query")),
     }
 }
@@ -1295,7 +1305,7 @@ fn parse_zk_ask(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
-) -> Result<ParsedZkQuery, HttpError> {
+) -> Result<ZkQuery, HttpError> {
     println!("original pattern: {:#?}", pattern);
 
     match pattern {
@@ -1303,80 +1313,76 @@ fn parse_zk_ask(
             inner,
             start,
             length,
-        } => parse_zk_common(*inner, vec![], Some(start), length),
-        _ => parse_zk_common(pattern, vec![], None, None),
+        } => parse_zk_common(*inner, vec![], Some(ZkQueryLimit { start, length })),
+        _ => parse_zk_common(pattern, vec![], None),
     }
 }
 
 fn parse_zk_common(
     pattern: GraphPattern,
     disclosed_variables: Vec<Variable>,
-    limit_start: Option<usize>,
-    limit_length: Option<usize>,
-) -> Result<ParsedZkQuery, HttpError> {
+    limit: Option<ZkQueryLimit>,
+) -> Result<ZkQuery, HttpError> {
     let mut in_scope_variables = HashSet::new();
     pattern.on_in_scope_variable(|v| {
         in_scope_variables.insert(v.clone());
     });
     match pattern {
         GraphPattern::Filter { expr, inner } => match *inner {
-            GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+            GraphPattern::Bgp { patterns } => Ok(ZkQuery {
                 disclosed_variables,
                 in_scope_variables,
                 patterns,
                 filter: Some(expr),
-                values_bindings: None,
-                values_variables: None,
-                limit_start,
-                limit_length,
+                limit,
+                ..Default::default()
             }),
             GraphPattern::Join { left, right } => match (*left, *right) {
                 (
                     GraphPattern::Values {
-                        variables: values_variables,
-                        bindings: values_bindings,
+                        variables,
+                        bindings,
                     },
                     GraphPattern::Bgp { patterns },
-                ) => Ok(ParsedZkQuery {
+                ) => Ok(ZkQuery {
                     disclosed_variables,
                     in_scope_variables,
                     patterns,
                     filter: Some(expr),
-                    values_bindings: Some(values_bindings),
-                    values_variables: Some(values_variables),
-                    limit_start,
-                    limit_length,
+                    values: Some(ZkQueryValues {
+                        variables,
+                        bindings,
+                    }),
+                    limit,
                 }),
                 _ => Err(bad_request("invalid query")),
             },
             _ => Err(bad_request("invalid query")),
         },
-        GraphPattern::Bgp { patterns } => Ok(ParsedZkQuery {
+        GraphPattern::Bgp { patterns } => Ok(ZkQuery {
             disclosed_variables,
             in_scope_variables,
             patterns,
-            filter: None,
-            values_bindings: None,
-            values_variables: None,
-            limit_start,
-            limit_length,
+            limit,
+            ..Default::default()
         }),
         GraphPattern::Join { left, right } => match (*left, *right) {
             (
                 GraphPattern::Values {
-                    variables: values_variables,
-                    bindings: values_bindings,
+                    variables,
+                    bindings,
                 },
                 GraphPattern::Bgp { patterns },
-            ) => Ok(ParsedZkQuery {
+            ) => Ok(ZkQuery {
                 disclosed_variables,
                 in_scope_variables,
                 patterns,
-                filter: None,
-                values_bindings: Some(values_bindings),
-                values_variables: Some(values_variables),
-                limit_start,
-                limit_length,
+                values: Some(ZkQueryValues {
+                    variables,
+                    bindings,
+                }),
+                limit,
+                ..Default::default()
             }),
             _ => Err(bad_request("invalid query")),
         },
@@ -1385,7 +1391,7 @@ fn parse_zk_common(
 }
 
 // construct an extended query to identify credentials to be disclosed
-fn construct_extended_query(query: ParsedZkQuery) -> Result<spargebra::Query, HttpError> {
+fn construct_extended_query(query: ZkQuery) -> Result<spargebra::Query, HttpError> {
     // TODO: replace the variable prefix `ggggg` with randomized one
     let extended_graph_variables: Vec<_> = (0..query.patterns.len())
         .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
@@ -1414,8 +1420,11 @@ fn construct_extended_query(query: ParsedZkQuery) -> Result<spargebra::Query, Ht
         })
         .unwrap_or_default();
 
-    let extended_bgp_with_values = match (query.values_variables, query.values_bindings) {
-        (Some(variables), Some(bindings)) => GraphPattern::Join {
+    let extended_bgp_with_values = match query.values {
+        Some(ZkQueryValues {
+            variables,
+            bindings,
+        }) => GraphPattern::Join {
             left: Box::new(GraphPattern::Values {
                 variables,
                 bindings,
@@ -1433,11 +1442,11 @@ fn construct_extended_query(query: ParsedZkQuery) -> Result<spargebra::Query, Ht
         None => extended_bgp_with_values,
     };
 
-    let extended_graph_pattern = match query.limit_start {
-        Some(start) => GraphPattern::Slice {
+    let extended_graph_pattern = match query.limit {
+        Some(limit) => GraphPattern::Slice {
             inner: Box::new(extended_bgp_with_values_and_filter),
-            start,
-            length: query.limit_length,
+            start: limit.start,
+            length: limit.length,
         },
         _ => extended_bgp_with_values_and_filter,
     };
