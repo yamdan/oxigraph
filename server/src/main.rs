@@ -885,10 +885,18 @@ fn handle_request(
                 Err(unsupported_media_type(&content_type))
             }
         }
-        ("/zkquery", "GET") => {
-            configure_and_evaluate_zksparql_query(&store, &[url_query(request)], None, request)
+        ("/zkfetch" | "/zkquery", "GET") => {
+            let proof_required = request.url().path() == "/zkquery";
+            configure_and_evaluate_zksparql_query(
+                &store,
+                &[url_query(request)],
+                None,
+                request,
+                proof_required,
+            )
         }
-        ("/zkquery", "POST") => {
+        ("/zkfetch" | "/zkquery", "POST") => {
+            let proof_required = request.url().path() == "/zkquery";
             let content_type =
                 content_type(request).ok_or_else(|| bad_request("No Content-Type given"))?;
             if content_type == "application/sparql-query" {
@@ -904,6 +912,7 @@ fn handle_request(
                     &[url_query(request)],
                     Some(buffer),
                     request,
+                    proof_required,
                 )
             } else if content_type == "application/x-www-form-urlencoded" {
                 let mut buffer = Vec::new();
@@ -917,6 +926,7 @@ fn handle_request(
                     &[url_query(request), &buffer],
                     None,
                     request,
+                    proof_required,
                 )
             } else {
                 Err(unsupported_media_type(&content_type))
