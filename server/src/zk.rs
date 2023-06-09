@@ -1,14 +1,14 @@
 use crate::{
-    bad_request, base_url, internal_server_error, query_results_content_negotiation, HttpError,
-    ReadForWrite,
+    bad_request, base_url, graph_content_negotiation, internal_server_error,
+    query_results_content_negotiation, HttpError, ReadForWrite,
 };
-use oxhttp::model::{Request, Response};
-use oxigraph::{sparql::QueryResults, store::Store};
+use oxhttp::model::{Request, Response, ResponseBuilder, Status};
+use oxigraph::{io::GraphSerializer, sparql::QueryResults, store::Store};
 use oxiri::Iri;
 use sparesults::QueryResultsSerializer;
 use spargebra::{
     algebra::{Expression, GraphPattern, QueryDataset},
-    term::{GroundTerm, NamedNodePattern, TriplePattern, Variable},
+    term::{BlankNode, GroundTerm, NamedNodePattern, TermPattern, TriplePattern, Variable},
 };
 use std::collections::HashSet;
 use url::form_urlencoded;
@@ -31,7 +31,10 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
         }
     }
     let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
-    evaluate_zksparql_query(store, &query, request, proof_required)
+    match proof_required {
+        false => evaluate_zksparql_fetch(store, &query, request),
+        true => evaluate_zksparql_query(store, &query, request),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -44,43 +47,36 @@ struct ZkQuery {
     limit: Option<ZkQueryLimit>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct ZkQueryValues {
     variables: Vec<Variable>,
     bindings: Vec<Vec<Option<GroundTerm>>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct ZkQueryLimit {
     start: usize,
     length: Option<usize>,
 }
 
-fn evaluate_zksparql_query(
+fn evaluate_zksparql_fetch(
     store: &Store,
     query: &str,
     request: &Request,
-    proof_required: bool,
 ) -> Result<Response, HttpError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. construct an extended query to identify credentials to be disclosed
-    let extended_query = construct_extended_query(&parsed_zk_query)?;
+    // 2. build an extended SELECT query to identify credentials to be disclosed
+    let extended_query = build_extended_select(&parsed_zk_query)?;
     println!("extended_query: {:#?}", extended_query);
+    println!("!!! extended_query: {}", extended_query);
 
     // 3. execute the extended query to get extended solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
-    // 4. generate a proof if required
-    let proof = if proof_required {
-        prove(store, &parsed_zk_query, &extended_results)
-    } else {
-        None
-    };
-
-    // 5. return query results
+    // 4. return fetched results
     match extended_results {
         QueryResults::Solutions(solutions) => {
             let format = query_results_content_negotiation(request)?;
@@ -106,6 +102,64 @@ fn evaluate_zksparql_query(
         }
         _ => Err(bad_request("invalid query results")),
     }
+}
+
+fn evaluate_zksparql_query(
+    store: &Store,
+    query: &str,
+    request: &Request,
+) -> Result<Response, HttpError> {
+    // 1. parse a zk-SPARQL query
+    let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
+    println!("parsed_zk_query: {:#?}", parsed_zk_query);
+
+    // 2. build an extended CONSTRUCT query to construct disclosed quads from credentials
+    let extended_query = build_extended_construct(&parsed_zk_query)?;
+    println!("extended_query: {:#?}", extended_query);
+    println!("!!! extended_query: {}", extended_query);
+
+    // 3. execute the extended query to get extended solutions
+    let extended_results = store.query(extended_query).map_err(internal_server_error)?;
+
+    let disclosed_triples: Vec<_> = match extended_results {
+        QueryResults::Graph(triples) => triples.collect(),
+        _ => return Err(bad_request("invalid query results")),
+    };
+    let disclosed_triples: Result<Vec<_>, _> = disclosed_triples.into_iter().collect();
+    println!("disclosed_triples: {:#?}", disclosed_triples);
+    for t in disclosed_triples.unwrap() {
+        println!("{}", t);
+    }
+
+    // 4. generate a proof if required
+    //let proof = prove(store, &parsed_zk_query, &extended_results);
+
+    // 5. return query results
+    Ok(Response::builder(Status::OK).with_body(""))
+    // match extended_results {
+    //     QueryResults::Graph(triples) => {
+    //         let format = graph_content_negotiation(request)?;
+    //         ReadForWrite::build_response(
+    //             move |w| {
+    //                 Ok((
+    //                     GraphSerializer::from_format(format).triple_writer(w)?,
+    //                     triples,
+    //                 ))
+    //             },
+    //             |(mut writer, mut triples)| {
+    //                 Ok(if let Some(t) = triples.next() {
+    //                     writer.write(&t?)?;
+    //                     Some((writer, triples))
+    //                 } else {
+    //                     writer.finish()?;
+    //                     None
+    //                 })
+    //             },
+    //             format.media_type(),
+    //         )
+    //     }
+    //     _ => Err(bad_request("invalid query results")),
+    // }
 }
 
 // parse a zk-SPARQL query
@@ -172,6 +226,11 @@ fn parse_zk_ask(
     }
 }
 
+struct ZkBgpAndValues {
+    bgp: Vec<TriplePattern>,
+    values: Option<ZkQueryValues>,
+}
+
 fn parse_zk_common(
     pattern: GraphPattern,
     disclosed_variables: Vec<Variable>,
@@ -181,71 +240,143 @@ fn parse_zk_common(
     pattern.on_in_scope_variable(|v| {
         in_scope_variables.insert(v.clone());
     });
+    let patterns: Vec<TriplePattern>;
+    let mut filter: Option<Expression> = None;
+    let mut values: Option<ZkQueryValues> = None;
+
     match pattern {
-        GraphPattern::Filter { expr, inner } => match *inner {
-            GraphPattern::Bgp { patterns } => Ok(ZkQuery {
-                disclosed_variables,
-                in_scope_variables,
-                patterns,
-                filter: Some(expr),
-                limit,
-                ..Default::default()
-            }),
-            GraphPattern::Join { left, right } => match (*left, *right) {
-                (
-                    GraphPattern::Values {
-                        variables,
-                        bindings,
-                    },
-                    GraphPattern::Bgp { patterns },
-                ) => Ok(ZkQuery {
-                    disclosed_variables,
-                    in_scope_variables,
-                    patterns,
-                    filter: Some(expr),
-                    values: Some(ZkQueryValues {
-                        variables,
-                        bindings,
-                    }),
-                    limit,
-                }),
-                _ => Err(bad_request("invalid query")),
-            },
-            _ => Err(bad_request("invalid query")),
-        },
-        GraphPattern::Bgp { patterns } => Ok(ZkQuery {
-            disclosed_variables,
-            in_scope_variables,
-            patterns,
-            limit,
-            ..Default::default()
-        }),
-        GraphPattern::Join { left, right } => match (*left, *right) {
-            (
-                GraphPattern::Values {
-                    variables,
-                    bindings,
+        GraphPattern::Filter { expr, inner } => {
+            filter = Some(expr);
+            match *inner {
+                GraphPattern::Bgp { patterns: bgp } => {
+                    patterns = bgp;
+                }
+                GraphPattern::Join { left, right } => match parse_zk_values(*left, *right) {
+                    Ok(ZkBgpAndValues { bgp, values: v }) => {
+                        patterns = bgp;
+                        values = v;
+                    }
+                    Err(e) => return Err(e),
                 },
-                GraphPattern::Bgp { patterns },
-            ) => Ok(ZkQuery {
-                disclosed_variables,
-                in_scope_variables,
-                patterns,
-                values: Some(ZkQueryValues {
-                    variables,
-                    bindings,
-                }),
-                limit,
-                ..Default::default()
-            }),
-            _ => Err(bad_request("invalid query")),
+                _ => return Err(bad_request("invalid query")),
+            };
+        }
+        GraphPattern::Bgp { patterns: bgp } => {
+            patterns = bgp;
+        }
+        GraphPattern::Join { left, right } => match parse_zk_values(*left, *right) {
+            Ok(ZkBgpAndValues { bgp, values: v }) => {
+                patterns = bgp;
+                values = v;
+            }
+            Err(e) => return Err(e),
         },
+        _ => return Err(bad_request("invalid query")),
+    };
+
+    Ok(ZkQuery {
+        disclosed_variables,
+        in_scope_variables,
+        patterns,
+        filter,
+        values,
+        limit,
+    })
+}
+
+fn parse_zk_values(left: GraphPattern, right: GraphPattern) -> Result<ZkBgpAndValues, HttpError> {
+    match (left, right) {
+        (
+            GraphPattern::Values {
+                variables,
+                bindings,
+            },
+            GraphPattern::Bgp { patterns: bgp },
+        )
+        | (
+            GraphPattern::Bgp { patterns: bgp },
+            GraphPattern::Values {
+                variables,
+                bindings,
+            },
+        ) => Ok(ZkBgpAndValues {
+            bgp,
+            values: Some(ZkQueryValues {
+                variables,
+                bindings,
+            }),
+        }),
         _ => Err(bad_request("invalid query")),
     }
 }
 
 // construct an extended query to identify credentials to be disclosed
-fn construct_extended_query(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+struct ExtendedQuery {
+    pattern: GraphPattern,
+    variables: Vec<Variable>,
+}
+
+fn build_extended_select(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+    let ExtendedQuery { pattern, variables } = build_extended_common(query)?;
+
+    Ok(spargebra::Query::Select {
+        dataset: None,
+        pattern: GraphPattern::Distinct {
+            inner: Box::new(GraphPattern::Project {
+                inner: Box::new(pattern),
+                variables,
+            }),
+        },
+        base_iri: None,
+    })
+}
+
+// Replace the blank nodes generated when expanding the property paths
+// with variables to get underlying named nodes in the credentials
+// using extended CONSTRUCT query
+fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
+    fn blanknode_to_variable(term: &TermPattern) -> TermPattern {
+        match term {
+            TermPattern::BlankNode(b) => {
+                TermPattern::Variable(Variable::new_unchecked(b.to_string()))
+            } // TODO: error check
+            _ => term.clone(),
+        }
+    }
+
+    let new_patterns: Vec<TriplePattern> = query
+        .patterns
+        .iter()
+        .map(|p| TriplePattern {
+            subject: blanknode_to_variable(&p.subject),
+            predicate: p.predicate.clone(),
+            object: blanknode_to_variable(&p.object),
+        })
+        .collect();
+
+    ZkQuery {
+        disclosed_variables: query.disclosed_variables.clone(),
+        in_scope_variables: query.in_scope_variables.clone(),
+        patterns: new_patterns,
+        filter: query.filter.clone(),
+        values: query.values.clone(),
+        limit: query.limit.clone(),
+    }
+}
+
+fn build_extended_construct(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+    let new_query = replace_blanknodes_with_variables(query);
+    let ExtendedQuery { pattern, variables } = build_extended_common(&new_query)?;
+
+    Ok(spargebra::Query::Construct {
+        template: new_query.patterns,
+        dataset: None,
+        pattern,
+        base_iri: None,
+    })
+}
+
+fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
     // TODO: replace the variable prefix `ggggg` with randomized one
     let extended_graph_variables: Vec<_> = (0..query.patterns.len())
         .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
@@ -305,19 +436,12 @@ fn construct_extended_query(query: &ZkQuery) -> Result<spargebra::Query, HttpErr
         _ => extended_bgp_with_values_and_filter,
     };
 
-    //let mut extended_variables: Vec<_> = query.in_scope_variables.into_iter().collect();
     let mut extended_variables = query.disclosed_variables.clone();
     extended_variables.extend(extended_graph_variables.into_iter());
 
-    Ok(spargebra::Query::Select {
-        dataset: None,
-        pattern: GraphPattern::Distinct {
-            inner: Box::new(GraphPattern::Project {
-                inner: Box::new(extended_graph_pattern),
-                variables: extended_variables,
-            }),
-        },
-        base_iri: None,
+    Ok(ExtendedQuery {
+        pattern: extended_graph_pattern,
+        variables: extended_variables,
     })
 }
 
@@ -327,5 +451,6 @@ fn prove(
     extended_results: &QueryResults,
 ) -> Option<String> {
     println!("!!! prove (TBD) !!!");
+
     Some("".to_string())
 }
