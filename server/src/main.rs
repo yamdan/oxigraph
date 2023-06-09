@@ -2,16 +2,14 @@
 use anyhow::{anyhow, bail, Context, Error};
 use clap::{Parser, Subcommand};
 use flate2::read::MultiGzDecoder;
-use oxhttp::{
-    model::{Body, HeaderName, HeaderValue, Method, Request, Response, Status},
-    Server,
+use oxhttp::model::{Body, HeaderName, HeaderValue, Method, Request, Response, Status};
+use oxhttp::Server;
+use oxigraph::io::{DatasetFormat, DatasetSerializer, GraphFormat, GraphSerializer};
+use oxigraph::model::{
+    GraphName, GraphNameRef, IriParseError, NamedNode, NamedNodeRef, NamedOrBlankNode,
 };
-use oxigraph::{
-    io::{DatasetFormat, DatasetSerializer, GraphFormat, GraphSerializer},
-    model::{GraphName, GraphNameRef, IriParseError, NamedNode, NamedNodeRef, NamedOrBlankNode},
-    sparql::{Query, QueryOptions, QueryResults, Update},
-    store::{BulkLoader, LoaderError, Store},
-};
+use oxigraph::sparql::{Query, QueryOptions, QueryResults, Update};
+use oxigraph::store::{BulkLoader, LoaderError, Store};
 use oxiri::Iri;
 use rand::random;
 use rayon_core::ThreadPoolBuilder;
