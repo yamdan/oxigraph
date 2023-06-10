@@ -10,7 +10,10 @@ use spargebra::{
     algebra::{Expression, GraphPattern, QueryDataset},
     term::{BlankNode, GroundTerm, NamedNodePattern, TermPattern, TriplePattern, Variable},
 };
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    iter::zip,
+};
 use url::form_urlencoded;
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
@@ -114,6 +117,17 @@ fn evaluate_zksparql_query(
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
     // 2. build an extended CONSTRUCT query to construct disclosed quads from credentials
+    let values = match &parsed_zk_query.values {
+        Some(v) => v,
+        None => return Err(bad_request("zkquery requires VALUES")),
+    };
+
+    let graphs: HashMap<_, _> = zip(&values.variables, &values.bindings[0])
+        .map(|(var, val)| (val, var))
+        .collect();
+    // TODO: append vars, extract only ggggg*
+    println!("graphs: {:#?}", graphs);
+
     let extended_query = build_extended_construct(&parsed_zk_query)?;
     println!("extended_query: {:#?}", extended_query);
     println!("!!! extended_query: {}", extended_query);
@@ -121,45 +135,45 @@ fn evaluate_zksparql_query(
     // 3. execute the extended query to get extended solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
-    let disclosed_triples: Vec<_> = match extended_results {
-        QueryResults::Graph(triples) => triples.collect(),
-        _ => return Err(bad_request("invalid query results")),
-    };
-    let disclosed_triples: Result<Vec<_>, _> = disclosed_triples.into_iter().collect();
-    println!("disclosed_triples: {:#?}", disclosed_triples);
-    for t in disclosed_triples.unwrap() {
-        println!("{}", t);
-    }
+    // let disclosed_triples: Vec<_> = match extended_results {
+    //     QueryResults::Graph(triples) => triples.collect(),
+    //     _ => return Err(bad_request("invalid query results")),
+    // };
+    // let disclosed_triples: Result<Vec<_>, _> = disclosed_triples.into_iter().collect();
+    // println!("disclosed_triples: {:#?}", disclosed_triples);
+    // for t in disclosed_triples.unwrap() {
+    //     println!("{}", t);
+    // }
 
     // 4. generate a proof if required
     //let proof = prove(store, &parsed_zk_query, &extended_results);
 
     // 5. return query results
-    Ok(Response::builder(Status::OK).with_body(""))
-    // match extended_results {
-    //     QueryResults::Graph(triples) => {
-    //         let format = graph_content_negotiation(request)?;
-    //         ReadForWrite::build_response(
-    //             move |w| {
-    //                 Ok((
-    //                     GraphSerializer::from_format(format).triple_writer(w)?,
-    //                     triples,
-    //                 ))
-    //             },
-    //             |(mut writer, mut triples)| {
-    //                 Ok(if let Some(t) = triples.next() {
-    //                     writer.write(&t?)?;
-    //                     Some((writer, triples))
-    //                 } else {
-    //                     writer.finish()?;
-    //                     None
-    //                 })
-    //             },
-    //             format.media_type(),
-    //         )
-    //     }
-    //     _ => Err(bad_request("invalid query results")),
-    // }
+    // Ok(Response::builder(Status::OK).with_body(""))
+    match extended_results {
+        QueryResults::Graph(triples) => {
+            let format = graph_content_negotiation(request)?;
+            ReadForWrite::build_response(
+                move |w| {
+                    Ok((
+                        GraphSerializer::from_format(format).triple_writer(w)?,
+                        triples,
+                    ))
+                },
+                |(mut writer, mut triples)| {
+                    Ok(if let Some(t) = triples.next() {
+                        writer.write(&t?)?;
+                        Some((writer, triples))
+                    } else {
+                        writer.finish()?;
+                        None
+                    })
+                },
+                format.media_type(),
+            )
+        }
+        _ => Err(bad_request("invalid query results")),
+    }
 }
 
 // parse a zk-SPARQL query
