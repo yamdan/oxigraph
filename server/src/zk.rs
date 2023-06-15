@@ -76,7 +76,7 @@ fn evaluate_zksparql_fetch(
     println!("extended_query: {:#?}", extended_query);
     println!("!!! extended_query: {}", extended_query);
 
-    // 3. execute the extended query to get extended solutions
+    // 3. execute the extended SELECT query to get extended solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
     // 4. return fetched results
@@ -116,54 +116,39 @@ fn evaluate_zksparql_query(
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. build an extended CONSTRUCT query to construct disclosed quads from credentials
+    // 2. build an extended SELECT* query to construct disclosed quads from credentials
     let values = match &parsed_zk_query.values {
         Some(v) => v,
-        None => return Err(bad_request("zkquery requires VALUES")),
+        None => return Err(bad_request("zkquery requires VALUES")),  // TODO: allow query without VALUES
     };
 
-    let graphs: HashMap<_, _> = zip(&values.variables, &values.bindings[0])
-        .map(|(var, val)| (val, var))
-        .collect();
-    // TODO: append vars, extract only ggggg*
-    println!("graphs: {:#?}", graphs);
+    let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
+    for (var, val) in zip(&values.variables, &values.bindings[0]) {
+        graphs.entry(val).or_insert_with(Vec::new).push(var);
+    }
 
-    let extended_query = build_extended_construct(&parsed_zk_query)?;
+    let extended_query = build_extended_select_all(&parsed_zk_query)?;
     println!("extended_query: {:#?}", extended_query);
-    println!("!!! extended_query: {}", extended_query);
 
-    // 3. execute the extended query to get extended solutions
+    // 3. execute the extended SELECT* query to get extended solution
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
-    // let disclosed_triples: Vec<_> = match extended_results {
-    //     QueryResults::Graph(triples) => triples.collect(),
-    //     _ => return Err(bad_request("invalid query results")),
-    // };
-    // let disclosed_triples: Result<Vec<_>, _> = disclosed_triples.into_iter().collect();
-    // println!("disclosed_triples: {:#?}", disclosed_triples);
-    // for t in disclosed_triples.unwrap() {
-    //     println!("{}", t);
-    // }
-
-    // 4. generate a proof if required
-    //let proof = prove(store, &parsed_zk_query, &extended_results);
-
-    // 5. return query results
-    // Ok(Response::builder(Status::OK).with_body(""))
+    // 4. return query results
     match extended_results {
-        QueryResults::Graph(triples) => {
-            let format = graph_content_negotiation(request)?;
+        QueryResults::Solutions(solutions) => {
+            let format = query_results_content_negotiation(request)?;
             ReadForWrite::build_response(
                 move |w| {
                     Ok((
-                        GraphSerializer::from_format(format).triple_writer(w)?,
-                        triples,
+                        QueryResultsSerializer::from_format(format)
+                            .solutions_writer(w, solutions.variables().to_vec())?,
+                        solutions,
                     ))
                 },
-                |(mut writer, mut triples)| {
-                    Ok(if let Some(t) = triples.next() {
-                        writer.write(&t?)?;
-                        Some((writer, triples))
+                |(mut writer, mut solutions)| {
+                    Ok(if let Some(solution) = solutions.next() {
+                        writer.write(&solution?)?;
+                        Some((writer, solutions))
                     } else {
                         writer.finish()?;
                         None
@@ -345,18 +330,40 @@ fn build_extended_select(query: &ZkQuery) -> Result<spargebra::Query, HttpError>
     })
 }
 
+fn build_extended_select_all(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+    let new_query = replace_blanknodes_with_variables(query);
+    println!("new_query.patterns: {:#?}", new_query.patterns);
+
+    let ExtendedQuery { pattern, .. } = build_extended_common(&new_query)?;
+
+    Ok(spargebra::Query::Select {
+        dataset: None,
+        pattern: GraphPattern::Distinct {
+            inner: Box::new(GraphPattern::Project {
+                inner: Box::new(pattern),
+                variables: new_query.in_scope_variables.into_iter().collect(),
+            }),
+        },
+        base_iri: None,
+    })
+}
+
 // Replace the blank nodes generated when expanding the property paths
 // with variables to get underlying named nodes in the credentials
-// using extended CONSTRUCT query
+// using extended query
 fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
-    fn blanknode_to_variable(term: &TermPattern) -> TermPattern {
+    let mut in_scope_variables = query.in_scope_variables.clone();
+
+    let mut blanknode_to_variable = |term: &TermPattern| -> TermPattern {
         match term {
             TermPattern::BlankNode(b) => {
-                TermPattern::Variable(Variable::new_unchecked(b.to_string()))
+                let v = Variable::new_unchecked(b.as_str());
+                in_scope_variables.insert(v.clone());
+                TermPattern::Variable(v)
             } // TODO: error check
             _ => term.clone(),
         }
-    }
+    };
 
     let new_patterns: Vec<TriplePattern> = query
         .patterns
@@ -370,24 +377,12 @@ fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
 
     ZkQuery {
         disclosed_variables: query.disclosed_variables.clone(),
-        in_scope_variables: query.in_scope_variables.clone(),
+        in_scope_variables,
         patterns: new_patterns,
         filter: query.filter.clone(),
         values: query.values.clone(),
         limit: query.limit.clone(),
     }
-}
-
-fn build_extended_construct(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
-    let new_query = replace_blanknodes_with_variables(query);
-    let ExtendedQuery { pattern, variables } = build_extended_common(&new_query)?;
-
-    Ok(spargebra::Query::Construct {
-        template: new_query.patterns,
-        dataset: None,
-        pattern,
-        base_iri: None,
-    })
 }
 
 fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
