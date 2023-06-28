@@ -37,7 +37,7 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
     }
     let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
     if proof_required {
-        evaluate_zksparql_query(store, &query, request)
+        evaluate_zksparql_prove(store, &query, request)
     } else {
         evaluate_zksparql_fetch(store, &query, request)
     }
@@ -65,7 +65,7 @@ struct ZkQueryLimit {
     length: Option<usize>,
 }
 
-/// Evaluate a zk-SPARQL query on zkFetch endpoint
+/// Evaluate a zk-SPARQL query on the Fetch endpoint
 fn evaluate_zksparql_fetch(
     store: &Store,
     query: &str,
@@ -111,8 +111,8 @@ fn evaluate_zksparql_fetch(
     }
 }
 
-/// Evaluate a zk-SPARQL query on zkProve endpoint
-fn evaluate_zksparql_query(
+/// Evaluate a zk-SPARQL query on the Prove endpoint
+fn evaluate_zksparql_prove(
     store: &Store,
     query: &str,
     request: &Request,

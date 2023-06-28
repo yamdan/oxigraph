@@ -885,8 +885,8 @@ fn handle_request(
                 Err(unsupported_media_type(&content_type))
             }
         }
-        ("/zkfetch" | "/zkquery", "GET") => {
-            let proof_required = request.url().path() == "/zkquery";
+        ("/fetch" | "/prove", "GET") => {
+            let proof_required = request.url().path() == "/prove";
             configure_and_evaluate_zksparql_query(
                 &store,
                 &[url_query(request)],
@@ -895,8 +895,8 @@ fn handle_request(
                 proof_required,
             )
         }
-        ("/zkfetch" | "/zkquery", "POST") => {
-            let proof_required = request.url().path() == "/zkquery";
+        ("/fetch" | "/prove", "POST") => {
+            let proof_required = request.url().path() == "/prove";
             let content_type =
                 content_type(request).ok_or_else(|| bad_request("No Content-Type given"))?;
             if content_type == "application/sparql-query" {
