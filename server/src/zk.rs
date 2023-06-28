@@ -7,14 +7,16 @@ use oxigraph::{io::GraphSerializer, sparql::QueryResults, store::Store};
 use oxiri::Iri;
 use sparesults::QueryResultsSerializer;
 use spargebra::{
-    algebra::{Expression, GraphPattern, QueryDataset},
-    term::{BlankNode, GroundTerm, NamedNodePattern, TermPattern, TriplePattern, Variable},
+    algebra::{Expression, Function, GraphPattern, QueryDataset},
+    term::{GroundTerm, Literal, NamedNodePattern, TermPattern, TriplePattern, Variable},
 };
 use std::{
     collections::{HashMap, HashSet},
     iter::zip,
 };
 use url::form_urlencoded;
+
+const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -34,9 +36,10 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
         }
     }
     let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
-    match proof_required {
-        false => evaluate_zksparql_fetch(store, &query, request),
-        true => evaluate_zksparql_query(store, &query, request),
+    if proof_required {
+        evaluate_zksparql_query(store, &query, request)
+    } else {
+        evaluate_zksparql_fetch(store, &query, request)
     }
 }
 
@@ -62,6 +65,7 @@ struct ZkQueryLimit {
     length: Option<usize>,
 }
 
+/// Evaluate a zk-SPARQL query on zkFetch endpoint
 fn evaluate_zksparql_fetch(
     store: &Store,
     query: &str,
@@ -107,6 +111,7 @@ fn evaluate_zksparql_fetch(
     }
 }
 
+/// Evaluate a zk-SPARQL query on zkProve endpoint
 fn evaluate_zksparql_query(
     store: &Store,
     query: &str,
@@ -119,7 +124,7 @@ fn evaluate_zksparql_query(
     // 2. build an extended SELECT* query to construct disclosed quads from credentials
     let values = match &parsed_zk_query.values {
         Some(v) => v,
-        None => return Err(bad_request("zkquery requires VALUES")),  // TODO: allow query without VALUES
+        None => return Err(bad_request("zkquery requires VALUES")), // TODO: allow query without VALUES
     };
 
     let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
@@ -386,11 +391,12 @@ fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
 }
 
 fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
-    // TODO: replace the variable prefix `ggggg` with randomized one
+    // TODO: replace the variable prefix `__vc` with randomized one?
     let extended_graph_variables: Vec<_> = (0..query.patterns.len())
-        .map(|i| Variable::new_unchecked(format!("ggggg{}", i)))
+        .map(|i| Variable::new_unchecked(format!("__vc{}", i)))
         .collect();
 
+    // wrap each triple pattern with a GRAPH clause
     let extended_bgp = query
         .patterns
         .iter()
@@ -414,28 +420,55 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
         })
         .unwrap_or_default();
 
+    // add a VALUE clause, given by the user, to identify the credentials to present
     let extended_bgp_with_values = match &query.values {
         Some(ZkQueryValues {
             variables,
             bindings,
         }) => GraphPattern::Join {
             left: Box::new(GraphPattern::Values {
-                variables: variables.to_vec(),
-                bindings: bindings.to_vec(),
+                variables: variables.clone(),
+                bindings: bindings.clone(),
             }),
             right: Box::new(extended_bgp),
         },
         _ => extended_bgp,
     };
 
-    let extended_bgp_with_values_and_filter = match &query.filter {
-        Some(filter) => GraphPattern::Filter {
-            expr: filter.clone(),
-            inner: Box::new(extended_bgp_with_values),
-        },
-        None => extended_bgp_with_values,
+    // create FILTER clauses to limit the search target to the subject graphs
+    let subject_filter_expr = extended_graph_variables
+        .iter()
+        .map(|gvar| {
+            Expression::FunctionCall(
+                Function::StrEnds,
+                vec![
+                    Expression::FunctionCall(
+                        Function::Str,
+                        vec![Expression::Variable(gvar.clone())],
+                    ),
+                    Expression::Literal(Literal::new_simple_literal(SUBJECT_GRAPH_SUFFIX)),
+                ],
+            )
+        })
+        .reduce(|left, right| Expression::And(Box::new(left), Box::new(right)));
+    let subject_filter_expr = match subject_filter_expr {
+        Some(expr) => expr,
+        None => return Err(bad_request("Multiple query parameters provided")),
     };
 
+    // add FILTER clauses, provided by the user, if any
+    let extended_filter_expr = match &query.filter {
+        Some(expr) => Expression::And(Box::new(expr.clone()), Box::new(subject_filter_expr)),
+        None => subject_filter_expr,
+    };
+
+    // combine with extended BGP
+    let extended_bgp_with_values_and_filter = GraphPattern::Filter {
+        expr: extended_filter_expr,
+        inner: Box::new(extended_bgp_with_values),
+    };
+
+    // add the LIMIT if specified by the user
     let extended_graph_pattern = match &query.limit {
         Some(limit) => GraphPattern::Slice {
             inner: Box::new(extended_bgp_with_values_and_filter),
@@ -445,6 +478,8 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
         _ => extended_bgp_with_values_and_filter,
     };
 
+    // form a variable list by combining the variables specified by the user
+    // and the extended graph variables `__vc*` added here
     let mut extended_variables = query.disclosed_variables.clone();
     extended_variables.extend(extended_graph_variables.into_iter());
 
