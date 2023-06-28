@@ -436,7 +436,7 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
     };
 
     // create FILTER clauses to limit the search target to the subject graphs
-    let subject_filter_expr = extended_graph_variables
+    let Some(subject_filter_expr) = extended_graph_variables
         .iter()
         .map(|gvar| {
             Expression::FunctionCall(
@@ -450,13 +450,10 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
                 ],
             )
         })
-        .reduce(|left, right| Expression::And(Box::new(left), Box::new(right)));
-    let subject_filter_expr = match subject_filter_expr {
-        Some(expr) => expr,
-        None => return Err(bad_request("Multiple query parameters provided")),
-    };
+        .reduce(|left, right| Expression::And(Box::new(left), Box::new(right)))
+        else { return Err(bad_request("Multiple query parameters provided")) };
 
-    // add FILTER clauses, provided by the user, if any
+    // add user-provided FILTER clauses, if any
     let extended_filter_expr = match &query.filter {
         Some(expr) => Expression::And(Box::new(expr.clone()), Box::new(subject_filter_expr)),
         None => subject_filter_expr,
