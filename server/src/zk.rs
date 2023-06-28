@@ -17,6 +17,7 @@ use std::{
 use url::form_urlencoded;
 
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
+const VC_VARIABLE_PREFIX: &str = "__vc";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -76,9 +77,9 @@ fn evaluate_zksparql_fetch(
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
     // 2. build an extended SELECT query to identify credentials to be disclosed
-    let extended_query = build_extended_select(&parsed_zk_query)?;
-    println!("extended_query: {:#?}", extended_query);
-    println!("!!! extended_query: {}", extended_query);
+    let extended_query = build_extended_fetch_query(&parsed_zk_query)?;
+    println!("extended fetch query: {:#?}", extended_query);
+    println!("extended fetch query (SPARQL): {}", extended_query);
 
     // 3. execute the extended SELECT query to get extended solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
@@ -132,8 +133,9 @@ fn evaluate_zksparql_prove(
         graphs.entry(val).or_insert_with(Vec::new).push(var);
     }
 
-    let extended_query = build_extended_select_all(&parsed_zk_query)?;
-    println!("extended_query: {:#?}", extended_query);
+    let extended_query = build_extended_prove_query(&parsed_zk_query)?;
+    println!("extended prove query: {:#?}", extended_query);
+    println!("extended prove query (SPARQL): {}", extended_query);
 
     // 3. execute the extended SELECT* query to get extended solution
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
@@ -320,7 +322,7 @@ struct ExtendedQuery {
     variables: Vec<Variable>,
 }
 
-fn build_extended_select(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
     let ExtendedQuery { pattern, variables } = build_extended_common(query)?;
 
     Ok(spargebra::Query::Select {
@@ -335,7 +337,7 @@ fn build_extended_select(query: &ZkQuery) -> Result<spargebra::Query, HttpError>
     })
 }
 
-fn build_extended_select_all(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+fn build_extended_prove_query(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
     let new_query = replace_blanknodes_with_variables(query);
     println!("new_query.patterns: {:#?}", new_query.patterns);
 
@@ -391,9 +393,9 @@ fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
 }
 
 fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
-    // TODO: replace the variable prefix `__vc` with randomized one?
+    // TODO: replace the vc variable prefix (`__vc`) with randomized one?
     let extended_graph_variables: Vec<_> = (0..query.patterns.len())
-        .map(|i| Variable::new_unchecked(format!("__vc{}", i)))
+        .map(|i| Variable::new_unchecked(format!("{}{}", VC_VARIABLE_PREFIX, i)))
         .collect();
 
     // wrap each triple pattern with a GRAPH clause
