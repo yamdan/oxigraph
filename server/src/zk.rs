@@ -81,7 +81,7 @@ fn evaluate_zksparql_fetch(
     println!("extended fetch query: {:#?}", extended_query);
     println!("extended fetch query (SPARQL): {}", extended_query);
 
-    // 3. execute the extended SELECT query to get extended solutions
+    // 3. execute the extended SELECT query to get extended fetch solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
     // 4. return fetched results
@@ -122,10 +122,10 @@ fn evaluate_zksparql_prove(
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. build an extended SELECT* query to construct disclosed quads from credentials
+    // 2. build an extended prove query to construct disclosed quads from credentials
     let values = match &parsed_zk_query.values {
         Some(v) => v,
-        None => return Err(bad_request("zkquery requires VALUES")), // TODO: allow query without VALUES
+        None => return Err(bad_request("query to the prove endpoint requires VALUES")), // TODO: allow query without VALUES
     };
 
     let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
@@ -137,7 +137,7 @@ fn evaluate_zksparql_prove(
     println!("extended prove query: {:#?}", extended_query);
     println!("extended prove query (SPARQL): {}", extended_query);
 
-    // 3. execute the extended SELECT* query to get extended solution
+    // 3. execute the extended prove query to get extended prove solutions
     let extended_results = store.query(extended_query).map_err(internal_server_error)?;
 
     // 4. return query results
@@ -453,7 +453,7 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
             )
         })
         .reduce(|left, right| Expression::And(Box::new(left), Box::new(right)))
-        else { return Err(bad_request("Multiple query parameters provided")) };
+        else { return Err(bad_request("failed to build internal query")) };
 
     // add user-provided FILTER clauses, if any
     let extended_filter_expr = match &query.filter {

@@ -984,6 +984,7 @@ dependencies = [
  "oxhttp",
  "oxigraph",
  "oxiri",
+ "oxrdf",
  "predicates",
  "rand",
  "rayon-core",
