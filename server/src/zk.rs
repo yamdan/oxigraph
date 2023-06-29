@@ -1,14 +1,17 @@
-use crate::{
-    bad_request, base_url, graph_content_negotiation, internal_server_error,
-    query_results_content_negotiation, HttpError, ReadForWrite,
+use crate::{bad_request, base_url, query_results_content_negotiation, HttpError, ReadForWrite};
+use nanoid::nanoid;
+use oxhttp::model::{Request, Response};
+use oxigraph::{
+    sparql::{EvaluationError, QueryResults, QuerySolutionIter},
+    store::Store,
 };
-use oxhttp::model::{Request, Response, ResponseBuilder, Status};
-use oxigraph::{io::GraphSerializer, sparql::QueryResults, store::Store};
 use oxiri::Iri;
+use oxrdf::{NamedNode, Term, Triple};
 use sparesults::QueryResultsSerializer;
 use spargebra::{
     algebra::{Expression, Function, GraphPattern, QueryDataset},
     term::{GroundTerm, Literal, NamedNodePattern, TermPattern, TriplePattern, Variable},
+    ParseError,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -18,6 +21,50 @@ use url::form_urlencoded;
 
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const VC_VARIABLE_PREFIX: &str = "__vc";
+
+pub enum ZkSparqlError {
+    ConstructNotSupported,
+    DescribeNotSupported,
+    InvalidSparqlQuery(ParseError),
+    InvalidZkSparqlQuery,
+    SparqlEvaluationError(EvaluationError),
+    ValuesNotExist, // query to the prove endpoint requires VALUES
+    ExtendedQueryFailed,
+    FailedBuildingPseudonymousSolution,
+}
+
+impl From<EvaluationError> for ZkSparqlError {
+    fn from(value: EvaluationError) -> Self {
+        Self::SparqlEvaluationError(value)
+    }
+}
+
+impl Into<HttpError> for ZkSparqlError {
+    fn into(self) -> HttpError {
+        match self {
+            ZkSparqlError::ConstructNotSupported => {
+                bad_request("CONSTRUCT is not supported in zk-SPARQL")
+            }
+            ZkSparqlError::DescribeNotSupported => {
+                bad_request("DESCRIBE is not supported in zk-SPARQL")
+            }
+            ZkSparqlError::InvalidSparqlQuery(e) => {
+                bad_request(format!("invalid SPARQL query: {}", e))
+            }
+            ZkSparqlError::InvalidZkSparqlQuery => bad_request("invalid zk-SPARQL query"),
+            ZkSparqlError::SparqlEvaluationError(e) => {
+                bad_request(format!("sparql evaluation failed: {}", e))
+            }
+            ZkSparqlError::ValuesNotExist => {
+                bad_request("query for prove endpoint requires VALUES clause")
+            }
+            ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
+            ZkSparqlError::FailedBuildingPseudonymousSolution => {
+                bad_request("building pseudonymous solution failed")
+            }
+        }
+    }
+}
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -38,9 +85,35 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
     }
     let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
     if proof_required {
-        evaluate_zksparql_prove(store, &query, request)
+        evaluate_zksparql_prove(store, &query, request).map_err(|e| e.into())
     } else {
-        evaluate_zksparql_fetch(store, &query, request)
+        let extended_results =
+            evaluate_zksparql_fetch(store, &query, request).map_err(|e| e.into())?;
+        match extended_results {
+            QueryResults::Solutions(solutions) => {
+                let format = query_results_content_negotiation(request)?;
+                ReadForWrite::build_response(
+                    move |w| {
+                        Ok((
+                            QueryResultsSerializer::from_format(format)
+                                .solutions_writer(w, solutions.variables().to_vec())?,
+                            solutions,
+                        ))
+                    },
+                    |(mut writer, mut solutions)| {
+                        Ok(if let Some(solution) = solutions.next() {
+                            writer.write(&solution?)?;
+                            Some((writer, solutions))
+                        } else {
+                            writer.finish()?;
+                            None
+                        })
+                    },
+                    format.media_type(),
+                )
+            }
+            _ => Err(bad_request("invalid query")),
+        }
     }
 }
 
@@ -71,7 +144,7 @@ fn evaluate_zksparql_fetch(
     store: &Store,
     query: &str,
     request: &Request,
-) -> Result<Response, HttpError> {
+) -> Result<QueryResults, ZkSparqlError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
@@ -82,34 +155,9 @@ fn evaluate_zksparql_fetch(
     println!("extended fetch query (SPARQL): {}", extended_query);
 
     // 3. execute the extended SELECT query to get extended fetch solutions
-    let extended_results = store.query(extended_query).map_err(internal_server_error)?;
-
-    // 4. return fetched results
-    match extended_results {
-        QueryResults::Solutions(solutions) => {
-            let format = query_results_content_negotiation(request)?;
-            ReadForWrite::build_response(
-                move |w| {
-                    Ok((
-                        QueryResultsSerializer::from_format(format)
-                            .solutions_writer(w, solutions.variables().to_vec())?,
-                        solutions,
-                    ))
-                },
-                |(mut writer, mut solutions)| {
-                    Ok(if let Some(solution) = solutions.next() {
-                        writer.write(&solution?)?;
-                        Some((writer, solutions))
-                    } else {
-                        writer.finish()?;
-                        None
-                    })
-                },
-                format.media_type(),
-            )
-        }
-        _ => Err(bad_request("invalid query results")),
-    }
+    store
+        .query(extended_query)
+        .map_err(|e| ZkSparqlError::SparqlEvaluationError(e))
 }
 
 /// Evaluate a zk-SPARQL query on the Prove endpoint
@@ -117,7 +165,7 @@ fn evaluate_zksparql_prove(
     store: &Store,
     query: &str,
     request: &Request,
-) -> Result<Response, HttpError> {
+) -> Result<Response, ZkSparqlError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
@@ -125,7 +173,7 @@ fn evaluate_zksparql_prove(
     // 2. build an extended prove query to construct disclosed quads from credentials
     let values = match &parsed_zk_query.values {
         Some(v) => v,
-        None => return Err(bad_request("query to the prove endpoint requires VALUES")), // TODO: allow query without VALUES
+        None => return Err(ZkSparqlError::ValuesNotExist), // TODO: allow query without VALUES
     };
 
     let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
@@ -138,47 +186,139 @@ fn evaluate_zksparql_prove(
     println!("extended prove query (SPARQL): {}", extended_query);
 
     // 3. execute the extended prove query to get extended prove solutions
-    let extended_results = store.query(extended_query).map_err(internal_server_error)?;
+    let extended_results = store.query(extended_query)?;
+
+    let extended_solutions = match extended_results {
+        QueryResults::Solutions(solutions) => solutions,
+        _ => return Err(ZkSparqlError::ExtendedQueryFailed),
+    };
+
+    // TODO: build pseudonymous solutions
+    let PseudonymousSolutions {
+        solutions,
+        deanon_map: mapping,
+    } = build_pseudonymous_solutions(&extended_solutions, &parsed_zk_query.disclosed_variables)?;
+
+    // TODO: assign pseudonymous solutions to extended prove patterns
+    let disclosed_subjects = solutions.iter().map(|solution| {
+        parsed_zk_query
+            .patterns
+            .iter()
+            .map(move |pattern| assign_solution_to_pattern(solution, pattern))
+    });
 
     // 4. return query results
-    match extended_results {
-        QueryResults::Solutions(solutions) => {
-            let format = query_results_content_negotiation(request)?;
-            ReadForWrite::build_response(
-                move |w| {
-                    Ok((
-                        QueryResultsSerializer::from_format(format)
-                            .solutions_writer(w, solutions.variables().to_vec())?,
-                        solutions,
-                    ))
-                },
-                |(mut writer, mut solutions)| {
-                    Ok(if let Some(solution) = solutions.next() {
-                        writer.write(&solution?)?;
-                        Some((writer, solutions))
-                    } else {
-                        writer.finish()?;
-                        None
-                    })
-                },
-                format.media_type(),
-            )
+    todo!()
+    // let format = query_results_content_negotiation(request)?;
+    // ReadForWrite::build_response(
+    //     move |w| {
+    //         Ok((
+    //             QueryResultsSerializer::from_format(format)
+    //                 .solutions_writer(w, extended_solutions.variables().to_vec())?,
+    //             extended_solutions,
+    //         ))
+    //     },
+    //     |(mut writer, mut solutions)| {
+    //         Ok(if let Some(solution) = solutions.next() {
+    //             writer.write(&solution?)?;
+    //             Some((writer, solutions))
+    //         } else {
+    //             writer.finish()?;
+    //             None
+    //         })
+    //     },
+    //     format.media_type(),
+    // )
+}
+
+struct PseudonymousSolutions<'a> {
+    solutions: Vec<HashMap<&'a Variable, &'a Term>>,
+    deanon_map: HashMap<Term, Term>,
+}
+
+#[derive(Default)]
+struct PseudonymIssuer<'a> {
+    map_to_pseudonym: HashMap<(&'a Variable, &'a Term), Term>,
+}
+
+const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
+const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
+
+impl<'a> PseudonymIssuer<'a> {
+    fn generate_pseudonymous_iri() -> NamedNode {
+        let val = nanoid!();
+        NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
+    }
+
+    fn generate_pseudonymous_var() -> Literal {
+        let val = nanoid!();
+        Literal::new_simple_literal(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
+    }
+
+    fn issue(&mut self, var: &'a Variable, term: &'a Term) -> Result<&Term, ZkSparqlError> {
+        match term {
+            Term::NamedNode(_) => Ok(self
+                .map_to_pseudonym
+                .entry((var, term))
+                .or_insert(Term::NamedNode(Self::generate_pseudonymous_iri()))),
+            Term::Literal(_) => Ok(self
+                .map_to_pseudonym
+                .entry((var, term))
+                .or_insert(Term::Literal(Self::generate_pseudonymous_var()))),
+            _ => Err(ZkSparqlError::FailedBuildingPseudonymousSolution),
         }
-        _ => Err(bad_request("invalid query results")),
+    }
+
+    fn generate_deanon_map(&self) -> HashMap<Term, Term> {
+        self.map_to_pseudonym
+            .iter()
+            .map(|((_, t), nym)| (nym.clone(), *t.clone()))
+            .collect()
     }
 }
 
+fn build_pseudonymous_solutions<'a>(
+    solutions: &QuerySolutionIter,
+    disclosed_variables: &Vec<Variable>,
+) -> Result<PseudonymousSolutions<'a>, ZkSparqlError> {
+    let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
+    let nym_issuer = PseudonymIssuer::default();
+
+    let mut pseudonymous_solutions: Result<Vec<HashMap<_, _>>, ZkSparqlError> = solutions
+        .map(|solution| {
+            solution?
+                .iter()
+                .map(|(var, term)| {
+                    if disclosed_variables.contains(var) {
+                        Ok((var, term))
+                    } else {
+                        Ok((var, nym_issuer.issue(var, term)?))
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let deanon_map = nym_issuer.generate_deanon_map();
+    Ok(PseudonymousSolutions {
+        solutions: pseudonymous_solutions?,
+        deanon_map,
+    })
+}
+
+fn assign_solution_to_pattern<'a>(
+    solution: &HashMap<&'a Variable, &'a Term>,
+    pattern: &TriplePattern,
+) -> Result<Triple, HttpError> {
+    todo!()
+}
+
 // parse a zk-SPARQL query
-fn parse_zk_query(query: &str, base_iri: Option<&str>) -> Result<ZkQuery, HttpError> {
+fn parse_zk_query(query: &str, base_iri: Option<&str>) -> Result<ZkQuery, ZkSparqlError> {
     let parsed_query = spargebra::Query::parse(query, base_iri)
-        .map_err(|e| bad_request(format!("Invalid query: {:?}", e)))?;
+        .map_err(|e| ZkSparqlError::InvalidSparqlQuery(e))?;
     match parsed_query {
-        spargebra::Query::Construct { .. } => {
-            Err(bad_request("CONSTRUCT is not supported in zk-SPARQL"))
-        }
-        spargebra::Query::Describe { .. } => {
-            Err(bad_request("DESCRIBE is not supported in zk-SPARQL"))
-        }
+        spargebra::Query::Construct { .. } => Err(ZkSparqlError::ConstructNotSupported),
+        spargebra::Query::Describe { .. } => Err(ZkSparqlError::DescribeNotSupported),
         spargebra::Query::Select {
             dataset,
             pattern,
@@ -196,7 +336,7 @@ fn parse_zk_select(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, HttpError> {
+) -> Result<ZkQuery, ZkSparqlError> {
     println!("original pattern: {:#?}", pattern);
 
     match pattern {
@@ -208,10 +348,10 @@ fn parse_zk_select(
             GraphPattern::Project { inner, variables } => {
                 parse_zk_common(*inner, variables, Some(ZkQueryLimit { start, length }))
             }
-            _ => Err(bad_request("invalid SELECT query")),
+            _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
         },
         GraphPattern::Project { inner, variables } => parse_zk_common(*inner, variables, None),
-        _ => Err(bad_request("invalid SELECT query")),
+        _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
     }
 }
 
@@ -219,7 +359,7 @@ fn parse_zk_ask(
     _dataset: Option<QueryDataset>,
     pattern: GraphPattern,
     _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, HttpError> {
+) -> Result<ZkQuery, ZkSparqlError> {
     println!("original pattern: {:#?}", pattern);
 
     match pattern {
@@ -241,7 +381,7 @@ fn parse_zk_common(
     pattern: GraphPattern,
     disclosed_variables: Vec<Variable>,
     limit: Option<ZkQueryLimit>,
-) -> Result<ZkQuery, HttpError> {
+) -> Result<ZkQuery, ZkSparqlError> {
     let mut in_scope_variables = HashSet::new();
     pattern.on_in_scope_variable(|v| {
         in_scope_variables.insert(v.clone());
@@ -264,7 +404,7 @@ fn parse_zk_common(
                     }
                     Err(e) => return Err(e),
                 },
-                _ => return Err(bad_request("invalid query")),
+                _ => return Err(ZkSparqlError::InvalidZkSparqlQuery),
             };
         }
         GraphPattern::Bgp { patterns: bgp } => {
@@ -277,7 +417,7 @@ fn parse_zk_common(
             }
             Err(e) => return Err(e),
         },
-        _ => return Err(bad_request("invalid query")),
+        _ => return Err(ZkSparqlError::InvalidZkSparqlQuery),
     };
 
     Ok(ZkQuery {
@@ -290,7 +430,10 @@ fn parse_zk_common(
     })
 }
 
-fn parse_zk_values(left: GraphPattern, right: GraphPattern) -> Result<ZkBgpAndValues, HttpError> {
+fn parse_zk_values(
+    left: GraphPattern,
+    right: GraphPattern,
+) -> Result<ZkBgpAndValues, ZkSparqlError> {
     match (left, right) {
         (
             GraphPattern::Values {
@@ -312,7 +455,7 @@ fn parse_zk_values(left: GraphPattern, right: GraphPattern) -> Result<ZkBgpAndVa
                 bindings,
             }),
         }),
-        _ => Err(bad_request("invalid query")),
+        _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
     }
 }
 
@@ -322,7 +465,7 @@ struct ExtendedQuery {
     variables: Vec<Variable>,
 }
 
-fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
     let ExtendedQuery { pattern, variables } = build_extended_common(query)?;
 
     Ok(spargebra::Query::Select {
@@ -337,7 +480,7 @@ fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, HttpE
     })
 }
 
-fn build_extended_prove_query(query: &ZkQuery) -> Result<spargebra::Query, HttpError> {
+fn build_extended_prove_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
     let new_query = replace_blanknodes_with_variables(query);
     println!("new_query.patterns: {:#?}", new_query.patterns);
 
@@ -392,7 +535,7 @@ fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
     }
 }
 
-fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
+fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, ZkSparqlError> {
     // TODO: replace the vc variable prefix (`__vc`) with randomized one?
     let extended_graph_variables: Vec<_> = (0..query.patterns.len())
         .map(|i| Variable::new_unchecked(format!("{}{}", VC_VARIABLE_PREFIX, i)))
@@ -406,7 +549,7 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
         .map(|(i, triple_pattern)| {
             let v = extended_graph_variables
                 .get(i)
-                .ok_or(bad_request("extended_variables: out of index"))?;
+                .ok_or(ZkSparqlError::ExtendedQueryFailed)?;
             Ok(GraphPattern::Graph {
                 name: NamedNodePattern::Variable(v.clone()),
                 inner: Box::new(GraphPattern::Bgp {
@@ -414,7 +557,7 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
                 }),
             })
         })
-        .collect::<Result<Vec<GraphPattern>, _>>()?
+        .collect::<Result<Vec<GraphPattern>, ZkSparqlError>>()?
         .into_iter()
         .reduce(|left, right| GraphPattern::Join {
             left: Box::new(left),
@@ -453,7 +596,7 @@ fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, HttpError> {
             )
         })
         .reduce(|left, right| Expression::And(Box::new(left), Box::new(right)))
-        else { return Err(bad_request("failed to build internal query")) };
+        else { return Err(ZkSparqlError::ExtendedQueryFailed) };
 
     // add user-provided FILTER clauses, if any
     let extended_filter_expr = match &query.filter {
