@@ -19,8 +19,17 @@ use std::{
 };
 use url::form_urlencoded;
 
+const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const VC_VARIABLE_PREFIX: &str = "__vc";
+const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
+const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
+const PSEUDONYM_ALPHABETS: [char; 62] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
+    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
+    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
+    'V', 'W', 'X', 'Y', 'Z',
+];
 
 pub enum ZkSparqlError {
     ConstructNotSupported,
@@ -249,15 +258,6 @@ struct Pseudonymizer {
     mapping: HashMap<(Variable, Term), Term>,
 }
 
-const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
-const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
-const PSEUDONYM_ALPHABETS: [char; 62] = [
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g',
-    'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-    'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-];
-
 impl Pseudonymizer {
     fn generate_pseudonymous_iri() -> NamedNode {
         let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
@@ -271,7 +271,8 @@ impl Pseudonymizer {
 
     fn issue(&mut self, var: &Variable, term: &Term) -> Result<Term, ZkSparqlError> {
         match term {
-            Term::NamedNode(_) => Ok(self
+            Term::NamedNode(n) if n.as_str().starts_with(SKOLEM_IRI_PREFIX) => Ok(term.clone()),
+            Term::NamedNode(n) if !n.as_str().starts_with(SKOLEM_IRI_PREFIX) => Ok(self
                 .mapping
                 .entry((var.clone(), term.clone()))
                 .or_insert(Term::NamedNode(Self::generate_pseudonymous_iri()))
