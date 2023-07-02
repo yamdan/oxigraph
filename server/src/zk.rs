@@ -5,7 +5,7 @@ use oxigraph::{
     sparql::{EvaluationError, QueryResults, QuerySolutionIter},
     store::Store,
 };
-use oxiri::Iri;
+use oxiri::{Iri, IriParseError};
 use oxrdf::{NamedNode, Term, Triple};
 use sparesults::QueryResultsSerializer;
 use spargebra::{
@@ -36,6 +36,12 @@ pub enum ZkSparqlError {
 impl From<EvaluationError> for ZkSparqlError {
     fn from(value: EvaluationError) -> Self {
         Self::SparqlEvaluationError(value)
+    }
+}
+
+impl From<IriParseError> for ZkSparqlError {
+    fn from(_: IriParseError) -> Self {
+        Self::FailedBuildingPseudonymousSolution
     }
 }
 
@@ -170,36 +176,38 @@ fn evaluate_zksparql_prove(
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. build an extended prove query to construct disclosed quads from credentials
+    // 2. identify the graphs (VCs) to be used in the proof
     let values = match &parsed_zk_query.values {
         Some(v) => v,
         None => return Err(ZkSparqlError::ValuesNotExist), // TODO: allow query without VALUES
     };
-
     let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
     for (var, val) in zip(&values.variables, &values.bindings[0]) {
         graphs.entry(val).or_insert_with(Vec::new).push(var);
     }
+    println!("graphs: {:#?}", graphs);
 
+    // 3. build an extended prove query to construct disclosed quads from credentials
     let extended_query = build_extended_prove_query(&parsed_zk_query)?;
     println!("extended prove query: {:#?}", extended_query);
     println!("extended prove query (SPARQL): {}", extended_query);
 
-    // 3. execute the extended prove query to get extended prove solutions
+    // 4. execute the extended prove query to get extended prove solutions
     let extended_results = store.query(extended_query)?;
-
     let extended_solutions = match extended_results {
         QueryResults::Solutions(solutions) => solutions,
         _ => return Err(ZkSparqlError::ExtendedQueryFailed),
     };
 
-    // TODO: build pseudonymous solutions
+    // 5. build pseudonymous solutions
     let PseudonymousSolutions {
         solutions,
-        deanon_map: mapping,
+        deanon_map,
     } = build_pseudonymous_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
+    println!("pseudonymous solutions: {:#?}", solutions);
+    println!("deanon map: {:#?}", deanon_map);
 
-    // TODO: assign pseudonymous solutions to extended prove patterns
+    // TODO: 6. assign pseudonymous solutions to extended prove patterns
     let disclosed_subjects = solutions.iter().map(|solution| {
         parsed_zk_query
             .patterns
@@ -207,7 +215,7 @@ fn evaluate_zksparql_prove(
             .map(move |pattern| assign_solution_to_pattern(solution, pattern))
     });
 
-    // 4. return query results
+    // 6. return query results
     todo!()
     // let format = query_results_content_negotiation(request)?;
     // ReadForWrite::build_response(
@@ -237,33 +245,39 @@ struct PseudonymousSolutions {
 }
 
 #[derive(Default)]
-struct PseudonymIssuer {
-    map_to_pseudonym: HashMap<(Variable, Term), Term>,
+struct Pseudonymizer {
+    mapping: HashMap<(Variable, Term), Term>,
 }
 
 const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
 const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
+const PSEUDONYM_ALPHABETS: [char; 62] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g',
+    'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+    'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+];
 
-impl PseudonymIssuer {
+impl Pseudonymizer {
     fn generate_pseudonymous_iri() -> NamedNode {
-        let val = nanoid!();
+        let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
     }
 
     fn generate_pseudonymous_var() -> Literal {
-        let val = nanoid!();
+        let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
         Literal::new_simple_literal(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
     }
 
     fn issue(&mut self, var: &Variable, term: &Term) -> Result<Term, ZkSparqlError> {
         match term {
             Term::NamedNode(_) => Ok(self
-                .map_to_pseudonym
+                .mapping
                 .entry((var.clone(), term.clone()))
                 .or_insert(Term::NamedNode(Self::generate_pseudonymous_iri()))
                 .clone()),
             Term::Literal(_) => Ok(self
-                .map_to_pseudonym
+                .mapping
                 .entry((var.clone(), term.clone()))
                 .or_insert(Term::Literal(Self::generate_pseudonymous_var()))
                 .clone()),
@@ -271,8 +285,8 @@ impl PseudonymIssuer {
         }
     }
 
-    fn generate_deanon_map(&self) -> HashMap<Term, Term> {
-        self.map_to_pseudonym
+    fn get_inverse(&self) -> HashMap<Term, Term> {
+        self.mapping
             .iter()
             .map(|((_, t), nym)| (nym.clone(), t.clone()))
             .collect()
@@ -284,26 +298,41 @@ fn build_pseudonymous_solutions(
     disclosed_variables: &[Variable],
 ) -> Result<PseudonymousSolutions, ZkSparqlError> {
     let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
-    let mut nym_issuer = PseudonymIssuer::default();
+    let mut pseudonymizer = Pseudonymizer::default();
 
-    let mut pseudonymous_solutions: Vec<HashMap<_, _>> = Vec::new();
-    for solution in solutions {
-        let s: Result<HashMap<_, _>, ZkSparqlError> = solution?
-            .iter()
-            .map(|(var, term)| {
-                if disclosed_variables.contains(var) {
-                    Ok((var.clone(), term.clone()))
-                } else {
-                    Ok((var.clone(), nym_issuer.issue(var, term)?))
-                }
-            })
-            .collect();
-        pseudonymous_solutions.push(s?);
-    }
-    let deanon_map = nym_issuer.generate_deanon_map();
+    let pseudonymous_solutions: Result<Vec<HashMap<_, _>>, ZkSparqlError> = solutions
+        .map(|solution| {
+            solution?
+                .iter()
+                .map(|(var, term)| {
+                    let pseudonymized_term = if disclosed_variables.contains(var) {
+                        term.clone()
+                    } else if var.as_str().starts_with(VC_VARIABLE_PREFIX) {
+                        match term {
+                            Term::NamedNode(n) => {
+                                if n.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) {
+                                    Term::NamedNode(NamedNode::new(
+                                        &n.as_str()
+                                            [0..(n.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
+                                    )?)
+                                } else {
+                                    return Err(ZkSparqlError::FailedBuildingPseudonymousSolution);
+                                }
+                            }
+                            _ => return Err(ZkSparqlError::FailedBuildingPseudonymousSolution),
+                        }
+                    } else {
+                        pseudonymizer.issue(var, term)?
+                    };
+                    Ok((var.clone(), pseudonymized_term))
+                })
+                .collect()
+        })
+        .collect();
+
     Ok(PseudonymousSolutions {
-        solutions: pseudonymous_solutions,
-        deanon_map,
+        solutions: pseudonymous_solutions?,
+        deanon_map: pseudonymizer.get_inverse(),
     })
 }
 
@@ -316,8 +345,8 @@ fn assign_solution_to_pattern(
 
 // parse a zk-SPARQL query
 fn parse_zk_query(query: &str, base_iri: Option<&str>) -> Result<ZkQuery, ZkSparqlError> {
-    let parsed_query = spargebra::Query::parse(query, base_iri)
-        .map_err(ZkSparqlError::InvalidSparqlQuery)?;
+    let parsed_query =
+        spargebra::Query::parse(query, base_iri).map_err(ZkSparqlError::InvalidSparqlQuery)?;
     match parsed_query {
         spargebra::Query::Construct { .. } => Err(ZkSparqlError::ConstructNotSupported),
         spargebra::Query::Describe { .. } => Err(ZkSparqlError::DescribeNotSupported),
@@ -484,7 +513,6 @@ fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSpa
 
 fn build_extended_prove_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
     let new_query = replace_blanknodes_with_variables(query);
-    println!("new_query.patterns: {:#?}", new_query.patterns);
 
     let ExtendedQuery { pattern, .. } = build_extended_common(&new_query)?;
 
