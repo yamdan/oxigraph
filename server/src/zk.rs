@@ -3,10 +3,10 @@ use nanoid::nanoid;
 use oxhttp::model::{Request, Response};
 use oxigraph::{
     sparql::{EvaluationError, QueryResults, QuerySolutionIter},
-    store::Store,
+    store::{StorageError, Store},
 };
 use oxiri::{Iri, IriParseError};
-use oxrdf::{GraphName, NamedNode, Quad, Subject, Term};
+use oxrdf::{GraphName, GraphNameRef, NamedNode, NamedNodeRef, Quad, Subject, Term};
 use sparesults::QueryResultsSerializer;
 use spargebra::{
     algebra::{Expression, Function, GraphPattern, QueryDataset},
@@ -18,6 +18,7 @@ use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
+const PROOF_GRAPH_SUFFIX: &str = ".proof";
 const VC_VARIABLE_PREFIX: &str = "__vc";
 const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
 const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
@@ -37,6 +38,7 @@ pub enum ZkSparqlError {
     ExtendedQueryFailed,
     FailedBuildingPseudonymousSolution,
     FailedBuildingDisclosedSubject,
+    FailedBuildingDisclosedDataset,
 }
 
 impl From<EvaluationError> for ZkSparqlError {
@@ -48,6 +50,12 @@ impl From<EvaluationError> for ZkSparqlError {
 impl From<IriParseError> for ZkSparqlError {
     fn from(_: IriParseError) -> Self {
         Self::FailedBuildingPseudonymousSolution
+    }
+}
+
+impl From<StorageError> for ZkSparqlError {
+    fn from(_: StorageError) -> Self {
+        Self::FailedBuildingDisclosedDataset
     }
 }
 
@@ -73,6 +81,9 @@ impl Into<HttpError> for ZkSparqlError {
             }
             ZkSparqlError::FailedBuildingDisclosedSubject => {
                 bad_request("building disclosed subject failed")
+            }
+            ZkSparqlError::FailedBuildingDisclosedDataset => {
+                bad_request("building disclosed dataset failed")
             }
         }
     }
@@ -182,30 +193,19 @@ fn evaluate_zksparql_prove(
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
-    // 2. identify the graphs (VCs) to be used in the proof
-    // let values = match &parsed_zk_query.values {
-    //     Some(v) => v,
-    //     None => return Err(ZkSparqlError::ValuesNotExist), // TODO: allow query without VALUES
-    // };
-    // let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
-    // for (var, val) in zip(&values.variables, &values.bindings[0]) {
-    //     graphs.entry(val).or_insert_with(Vec::new).push(var);
-    // }
-    // println!("graphs: {:#?}", graphs);
-
-    // 3. build an extended prove query to construct disclosed quads from credentials
+    // 2. build an extended prove query to construct disclosed quads from credentials
     let (extended_query, extended_triple_patterns) = build_extended_prove_query(&parsed_zk_query)?;
     println!("extended prove query: {:#?}", extended_query);
     println!("extended prove query (SPARQL): {}", extended_query);
 
-    // 4. execute the extended prove query to get extended prove solutions
+    // 3. execute the extended prove query to get extended prove solutions
     let extended_results = store.query(extended_query)?;
     let extended_solutions = match extended_results {
         QueryResults::Solutions(solutions) => solutions,
         _ => return Err(ZkSparqlError::ExtendedQueryFailed),
     };
 
-    // 5. build pseudonymous solutions
+    // 4. build pseudonymous solutions
     let PseudonymousSolutions {
         solutions,
         deanon_map,
@@ -213,20 +213,37 @@ fn evaluate_zksparql_prove(
     println!("pseudonymous solutions: {:#?}", solutions);
     println!("deanon map: {:#?}", deanon_map);
 
-    // TODO: 6. assign pseudonymous solutions to extended prove patterns
-    let disclosed_subjects = solutions
+    // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
+    let mut disclosed_subjects = build_disclosed_subjects(&solutions, &extended_triple_patterns)?;
+
+    // 6. build disclosed dataset and proofs
+    let cred_ids: HashSet<_> = disclosed_subjects
         .iter()
-        .map(|solution| {
-            extended_triple_patterns
-                .iter()
-                .map(|pattern| build_disclosed_subject(solution, pattern))
-                .collect::<Result<Vec<_>, ZkSparqlError>>()
-        })
-        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
+        .map(|quad| quad.graph_name.clone())
+        .collect();
 
-    println!("disclosed subjects: {:#?}", disclosed_subjects);
+    let mut disclosed_dataset = build_credential_metadata(&cred_ids, store)?;
+    disclosed_dataset.append(&mut disclosed_subjects);
+    println!(
+        "disclosed dataset: {}",
+        disclosed_dataset
+            .iter()
+            .map(|q| q.to_string())
+            .reduce(|l, r| format!("{}\n{}", l, r))
+            .unwrap_or("".to_string())
+    );
 
-    // 7. return query results
+    let proofs = build_proofs(&cred_ids, store)?;
+    println!(
+        "proofs: {}",
+        proofs
+            .iter()
+            .map(|q| q.to_string())
+            .reduce(|l, r| format!("{}\n{}", l, r))
+            .unwrap_or("".to_string())
+    );
+
+    // x. return query results
     todo!()
     // let format = query_results_content_negotiation(request)?;
     // ReadForWrite::build_response(
@@ -337,6 +354,58 @@ fn build_pseudonymous_solutions(
         solutions: pseudonymous_solutions?,
         deanon_map: pseudonymizer.get_inverse(),
     })
+}
+
+fn build_credential_metadata(
+    cred_ids: &HashSet<GraphName>,
+    store: &Store,
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let creds = cred_ids
+        .iter()
+        .map(|cred_id| {
+            store
+                .quads_for_pattern(None, None, None, Some(cred_id.into()))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(creds.into_iter().flatten().collect())
+}
+
+fn build_proofs(cred_ids: &HashSet<GraphName>, store: &Store) -> Result<Vec<Quad>, ZkSparqlError> {
+    let proofs = cred_ids
+        .iter()
+        .map(|cred_id| {
+            let proof_id = match cred_id {
+                GraphName::NamedNode(n) => format!("{}{}", n.as_str(), PROOF_GRAPH_SUFFIX),
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedDataset),
+            };
+            Ok(store
+                .quads_for_pattern(
+                    None,
+                    None,
+                    None,
+                    Some(GraphNameRef::from(NamedNodeRef::new(&proof_id)?)),
+                )
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(proofs.into_iter().flatten().collect())
+}
+
+fn build_disclosed_subjects(
+    solutions: &[HashMap<Variable, Term>],
+    extended_triple_patterns: &[TriplePatternWithGraphVar],
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let disclosed_subjects = solutions
+        .iter()
+        .map(|solution| {
+            extended_triple_patterns
+                .iter()
+                .map(|pattern| build_disclosed_subject(solution, pattern))
+                .collect::<Result<Vec<_>, ZkSparqlError>>()
+        })
+        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
+    Ok(disclosed_subjects.into_iter().flatten().collect())
 }
 
 fn build_disclosed_subject(
