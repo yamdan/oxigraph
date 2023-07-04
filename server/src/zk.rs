@@ -6,17 +6,14 @@ use oxigraph::{
     store::Store,
 };
 use oxiri::{Iri, IriParseError};
-use oxrdf::{NamedNode, Term, Triple};
+use oxrdf::{GraphName, NamedNode, Quad, Subject, Term};
 use sparesults::QueryResultsSerializer;
 use spargebra::{
     algebra::{Expression, Function, GraphPattern, QueryDataset},
     term::{GroundTerm, Literal, NamedNodePattern, TermPattern, TriplePattern, Variable},
     ParseError,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    iter::zip,
-};
+use std::collections::{HashMap, HashSet};
 use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
@@ -37,9 +34,9 @@ pub enum ZkSparqlError {
     InvalidSparqlQuery(ParseError),
     InvalidZkSparqlQuery,
     SparqlEvaluationError(EvaluationError),
-    ValuesNotExist, // query to the prove endpoint requires VALUES
     ExtendedQueryFailed,
     FailedBuildingPseudonymousSolution,
+    FailedBuildingDisclosedSubject,
 }
 
 impl From<EvaluationError> for ZkSparqlError {
@@ -70,12 +67,12 @@ impl Into<HttpError> for ZkSparqlError {
             ZkSparqlError::SparqlEvaluationError(e) => {
                 bad_request(format!("sparql evaluation failed: {}", e))
             }
-            ZkSparqlError::ValuesNotExist => {
-                bad_request("query for prove endpoint requires VALUES clause")
-            }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
             ZkSparqlError::FailedBuildingPseudonymousSolution => {
                 bad_request("building pseudonymous solution failed")
+            }
+            ZkSparqlError::FailedBuildingDisclosedSubject => {
+                bad_request("building disclosed subject failed")
             }
         }
     }
@@ -186,18 +183,18 @@ fn evaluate_zksparql_prove(
     println!("parsed_zk_query: {:#?}", parsed_zk_query);
 
     // 2. identify the graphs (VCs) to be used in the proof
-    let values = match &parsed_zk_query.values {
-        Some(v) => v,
-        None => return Err(ZkSparqlError::ValuesNotExist), // TODO: allow query without VALUES
-    };
-    let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
-    for (var, val) in zip(&values.variables, &values.bindings[0]) {
-        graphs.entry(val).or_insert_with(Vec::new).push(var);
-    }
-    println!("graphs: {:#?}", graphs);
+    // let values = match &parsed_zk_query.values {
+    //     Some(v) => v,
+    //     None => return Err(ZkSparqlError::ValuesNotExist), // TODO: allow query without VALUES
+    // };
+    // let mut graphs: HashMap<_, Vec<_>> = HashMap::new();
+    // for (var, val) in zip(&values.variables, &values.bindings[0]) {
+    //     graphs.entry(val).or_insert_with(Vec::new).push(var);
+    // }
+    // println!("graphs: {:#?}", graphs);
 
     // 3. build an extended prove query to construct disclosed quads from credentials
-    let extended_query = build_extended_prove_query(&parsed_zk_query)?;
+    let (extended_query, extended_triple_patterns) = build_extended_prove_query(&parsed_zk_query)?;
     println!("extended prove query: {:#?}", extended_query);
     println!("extended prove query (SPARQL): {}", extended_query);
 
@@ -217,14 +214,19 @@ fn evaluate_zksparql_prove(
     println!("deanon map: {:#?}", deanon_map);
 
     // TODO: 6. assign pseudonymous solutions to extended prove patterns
-    let disclosed_subjects = solutions.iter().map(|solution| {
-        parsed_zk_query
-            .patterns
-            .iter()
-            .map(move |pattern| assign_solution_to_pattern(solution, pattern))
-    });
+    let disclosed_subjects = solutions
+        .iter()
+        .map(|solution| {
+            extended_triple_patterns
+                .iter()
+                .map(|pattern| build_disclosed_subject(solution, pattern))
+                .collect::<Result<Vec<_>, ZkSparqlError>>()
+        })
+        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
 
-    // 6. return query results
+    println!("disclosed subjects: {:#?}", disclosed_subjects);
+
+    // 7. return query results
     todo!()
     // let format = query_results_content_negotiation(request)?;
     // ReadForWrite::build_response(
@@ -337,11 +339,64 @@ fn build_pseudonymous_solutions(
     })
 }
 
-fn assign_solution_to_pattern(
+fn build_disclosed_subject(
     solution: &HashMap<Variable, Term>,
-    pattern: &TriplePattern,
-) -> Result<Triple, HttpError> {
-    todo!()
+    pattern_with_graph_var: &TriplePatternWithGraphVar,
+) -> Result<Quad, ZkSparqlError> {
+    let TriplePatternWithGraphVar {
+        triple_pattern,
+        graph_var,
+    } = pattern_with_graph_var;
+
+    let g = match solution
+        .get(graph_var)
+        .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+    {
+        Term::NamedNode(n) => GraphName::NamedNode(n.clone()),
+        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    let s = match &triple_pattern.subject {
+        TermPattern::Variable(v) => {
+            let term = solution
+                .get(v)
+                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?;
+            match term {
+                Term::NamedNode(n) => Subject::NamedNode(n.clone()),
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+            }
+        }
+        TermPattern::NamedNode(n) => Subject::NamedNode(n.clone()),
+        TermPattern::BlankNode(n) => Subject::BlankNode(n.clone()),
+        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    let p = match &triple_pattern.predicate {
+        NamedNodePattern::Variable(v) => {
+            let term = solution
+                .get(v)
+                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+                .clone();
+            match term {
+                Term::NamedNode(n) => n,
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+            }
+        }
+        NamedNodePattern::NamedNode(n) => n.clone(),
+    };
+
+    let o = match &triple_pattern.object {
+        TermPattern::Variable(v) => solution
+            .get(v)
+            .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+            .clone(),
+        TermPattern::NamedNode(n) => Term::NamedNode(n.clone()),
+        TermPattern::BlankNode(n) => Term::BlankNode(n.clone()),
+        TermPattern::Literal(n) => Term::Literal(n.clone()),
+        TermPattern::Triple(_) => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    Ok(Quad::new(s, p, o, g))
 }
 
 // parse a zk-SPARQL query
@@ -498,7 +553,14 @@ struct ExtendedQuery {
 }
 
 fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
-    let ExtendedQuery { pattern, variables } = build_extended_common(query)?;
+    let extended_graph_variables: Vec<_> = (0..query.patterns.len())
+        .map(|i| Variable::new_unchecked(format!("{}{}", VC_VARIABLE_PREFIX, i)))
+        .collect();
+    let extended_triple_patterns =
+        build_extended_triple_patterns(&query.patterns, &extended_graph_variables)?;
+
+    let ExtendedQuery { pattern, variables } =
+        build_extended_query(query, extended_graph_variables, &extended_triple_patterns)?;
 
     Ok(spargebra::Query::Select {
         dataset: None,
@@ -512,21 +574,36 @@ fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSpa
     })
 }
 
-fn build_extended_prove_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
+fn build_extended_prove_query(
+    query: &ZkQuery,
+) -> Result<(spargebra::Query, Vec<TriplePatternWithGraphVar>), ZkSparqlError> {
     let new_query = replace_blanknodes_with_variables(query);
 
-    let ExtendedQuery { pattern, .. } = build_extended_common(&new_query)?;
+    let extended_graph_variables: Vec<_> = (0..new_query.patterns.len())
+        .map(|i| Variable::new_unchecked(format!("{}{}", VC_VARIABLE_PREFIX, i)))
+        .collect();
+    let extended_triple_patterns =
+        build_extended_triple_patterns(&new_query.patterns, &extended_graph_variables)?;
 
-    Ok(spargebra::Query::Select {
-        dataset: None,
-        pattern: GraphPattern::Distinct {
-            inner: Box::new(GraphPattern::Project {
-                inner: Box::new(pattern),
-                variables: new_query.in_scope_variables.into_iter().collect(),
-            }),
+    let ExtendedQuery { pattern, .. } = build_extended_query(
+        &new_query,
+        extended_graph_variables,
+        &extended_triple_patterns,
+    )?;
+
+    Ok((
+        spargebra::Query::Select {
+            dataset: None,
+            pattern: GraphPattern::Distinct {
+                inner: Box::new(GraphPattern::Project {
+                    inner: Box::new(pattern),
+                    variables: new_query.in_scope_variables.into_iter().collect(),
+                }),
+            },
+            base_iri: None,
         },
-        base_iri: None,
-    })
+        extended_triple_patterns,
+    ))
 }
 
 // Replace the blank nodes generated when expanding the property paths
@@ -566,25 +643,44 @@ fn replace_blanknodes_with_variables(query: &ZkQuery) -> ZkQuery {
     }
 }
 
-fn build_extended_common(query: &ZkQuery) -> Result<ExtendedQuery, ZkSparqlError> {
-    // TODO: replace the vc variable prefix (`__vc`) with randomized one?
-    let extended_graph_variables: Vec<_> = (0..query.patterns.len())
-        .map(|i| Variable::new_unchecked(format!("{}{}", VC_VARIABLE_PREFIX, i)))
-        .collect();
+#[derive(Debug)]
+struct TriplePatternWithGraphVar {
+    triple_pattern: TriplePattern,
+    graph_var: Variable,
+}
 
-    // wrap each triple pattern with a GRAPH clause
-    let extended_bgp = query
-        .patterns
+fn build_extended_triple_patterns(
+    patterns: &[TriplePattern],
+    extended_graph_variables: &[Variable],
+) -> Result<Vec<TriplePatternWithGraphVar>, ZkSparqlError> {
+    patterns
         .iter()
         .enumerate()
         .map(|(i, triple_pattern)| {
-            let v = extended_graph_variables
+            let graph_var = extended_graph_variables
                 .get(i)
                 .ok_or(ZkSparqlError::ExtendedQueryFailed)?;
+            Ok(TriplePatternWithGraphVar {
+                triple_pattern: triple_pattern.clone(),
+                graph_var: graph_var.clone(),
+            })
+        })
+        .collect::<Result<Vec<TriplePatternWithGraphVar>, ZkSparqlError>>()
+}
+
+fn build_extended_query(
+    query: &ZkQuery,
+    extended_graph_variables: Vec<Variable>,
+    extended_triple_patterns: &[TriplePatternWithGraphVar],
+) -> Result<ExtendedQuery, ZkSparqlError> {
+    // wrap each triple pattern with a GRAPH clause
+    let extended_bgp = extended_triple_patterns
+        .iter()
+        .map(|p| {
             Ok(GraphPattern::Graph {
-                name: NamedNodePattern::Variable(v.clone()),
+                name: NamedNodePattern::Variable(p.graph_var.clone()),
                 inner: Box::new(GraphPattern::Bgp {
-                    patterns: vec![triple_pattern.clone()],
+                    patterns: vec![p.triple_pattern.clone()],
                 }),
             })
         })
