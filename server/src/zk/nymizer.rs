@@ -14,7 +14,7 @@ pub struct PseudonymousSolutions {
 }
 
 #[derive(Default)]
-pub struct Pseudonymizer {
+struct Pseudonymizer {
     mapping: HashMap<(Variable, Term), Term>,
 }
 
@@ -29,7 +29,7 @@ impl Pseudonymizer {
         Literal::new_simple_literal(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
     }
 
-    pub fn issue(&mut self, var: &Variable, term: &Term) -> Result<Term, ZkSparqlError> {
+    fn issue(&mut self, var: &Variable, term: &Term) -> Result<Term, ZkSparqlError> {
         match term {
             Term::NamedNode(n) if n.as_str().starts_with(SKOLEM_IRI_PREFIX) => Ok(term.clone()),
             Term::NamedNode(n) if !n.as_str().starts_with(SKOLEM_IRI_PREFIX) => Ok(self
@@ -46,7 +46,7 @@ impl Pseudonymizer {
         }
     }
 
-    pub fn get_inverse(&self) -> HashMap<Term, Term> {
+    fn get_inverse(&self) -> HashMap<Term, Term> {
         self.mapping
             .iter()
             .map(|((_, t), nym)| (nym.clone(), t.clone()))
@@ -54,7 +54,7 @@ impl Pseudonymizer {
     }
 }
 
-pub fn build_pseudonymous_solutions(
+pub fn pseudonymize_solutions(
     solutions: QuerySolutionIter,
     disclosed_variables: &[Variable],
 ) -> Result<PseudonymousSolutions, ZkSparqlError> {
