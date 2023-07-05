@@ -11,7 +11,7 @@ use crate::{
             build_extended_prove_query, build_proofs,
         },
         error::ZkSparqlError,
-        nymizer::{pseudonymize_solutions, PseudonymousSolutions},
+        nymizer::{Pseudonymizer, PseudonymousSolutions},
         parser::parse_zk_query,
     },
     HttpError, ReadForWrite,
@@ -131,10 +131,11 @@ fn evaluate_zksparql_prove(
     };
 
     // 4. pseudonymize the extended prove solutions
+    let mut nymizer = Pseudonymizer::default();
     let PseudonymousSolutions {
         solutions,
         deanon_map,
-    } = pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
+    } = nymizer.pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
     println!("pseudonymous solutions: {:#?}", solutions);
     println!("deanon map: {:#?}", deanon_map);
 
