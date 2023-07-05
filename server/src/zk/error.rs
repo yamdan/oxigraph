@@ -34,9 +34,9 @@ impl From<StorageError> for ZkSparqlError {
     }
 }
 
-impl Into<HttpError> for ZkSparqlError {
-    fn into(self) -> HttpError {
-        match self {
+impl From<ZkSparqlError> for HttpError {
+    fn from(val: ZkSparqlError) -> Self {
+        match val {
             ZkSparqlError::ConstructNotSupported => {
                 bad_request("CONSTRUCT is not supported in zk-SPARQL")
             }
