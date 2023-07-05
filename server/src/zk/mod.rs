@@ -1,17 +1,21 @@
+mod error;
+mod parser;
+
+use self::error::ZkSparqlError;
+use self::parser::{parse_zk_query, ZkQuery, ZkQueryValues};
 use crate::{bad_request, base_url, query_results_content_negotiation, HttpError, ReadForWrite};
+
 use nanoid::nanoid;
 use oxhttp::model::{Request, Response};
 use oxigraph::{
-    sparql::{EvaluationError, QueryResults, QuerySolutionIter},
-    store::{StorageError, Store},
+    sparql::{QueryResults, QuerySolutionIter},
+    store::Store,
 };
-use oxiri::{Iri, IriParseError};
 use oxrdf::{GraphName, GraphNameRef, NamedNode, NamedNodeRef, Quad, Subject, Term};
 use sparesults::QueryResultsSerializer;
 use spargebra::{
-    algebra::{Expression, Function, GraphPattern, QueryDataset},
-    term::{GroundTerm, Literal, NamedNodePattern, TermPattern, TriplePattern, Variable},
-    ParseError,
+    algebra::{Expression, Function, GraphPattern},
+    term::{Literal, NamedNodePattern, TermPattern, TriplePattern, Variable},
 };
 use std::collections::{HashMap, HashSet};
 use url::form_urlencoded;
@@ -28,66 +32,6 @@ const PSEUDONYM_ALPHABETS: [char; 62] = [
     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
     'V', 'W', 'X', 'Y', 'Z',
 ];
-
-pub enum ZkSparqlError {
-    ConstructNotSupported,
-    DescribeNotSupported,
-    InvalidSparqlQuery(ParseError),
-    InvalidZkSparqlQuery,
-    SparqlEvaluationError(EvaluationError),
-    ExtendedQueryFailed,
-    FailedBuildingPseudonymousSolution,
-    FailedBuildingDisclosedSubject,
-    FailedBuildingDisclosedDataset,
-}
-
-impl From<EvaluationError> for ZkSparqlError {
-    fn from(value: EvaluationError) -> Self {
-        Self::SparqlEvaluationError(value)
-    }
-}
-
-impl From<IriParseError> for ZkSparqlError {
-    fn from(_: IriParseError) -> Self {
-        Self::FailedBuildingPseudonymousSolution
-    }
-}
-
-impl From<StorageError> for ZkSparqlError {
-    fn from(_: StorageError) -> Self {
-        Self::FailedBuildingDisclosedDataset
-    }
-}
-
-impl Into<HttpError> for ZkSparqlError {
-    fn into(self) -> HttpError {
-        match self {
-            ZkSparqlError::ConstructNotSupported => {
-                bad_request("CONSTRUCT is not supported in zk-SPARQL")
-            }
-            ZkSparqlError::DescribeNotSupported => {
-                bad_request("DESCRIBE is not supported in zk-SPARQL")
-            }
-            ZkSparqlError::InvalidSparqlQuery(e) => {
-                bad_request(format!("invalid SPARQL query: {}", e))
-            }
-            ZkSparqlError::InvalidZkSparqlQuery => bad_request("invalid zk-SPARQL query"),
-            ZkSparqlError::SparqlEvaluationError(e) => {
-                bad_request(format!("sparql evaluation failed: {}", e))
-            }
-            ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
-            ZkSparqlError::FailedBuildingPseudonymousSolution => {
-                bad_request("building pseudonymous solution failed")
-            }
-            ZkSparqlError::FailedBuildingDisclosedSubject => {
-                bad_request("building disclosed subject failed")
-            }
-            ZkSparqlError::FailedBuildingDisclosedDataset => {
-                bad_request("building disclosed dataset failed")
-            }
-        }
-    }
-}
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -138,28 +82,6 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
             _ => Err(bad_request("invalid query")),
         }
     }
-}
-
-#[derive(Debug, Default)]
-struct ZkQuery {
-    disclosed_variables: Vec<Variable>,
-    in_scope_variables: HashSet<Variable>,
-    patterns: Vec<TriplePattern>,
-    filter: Option<Expression>,
-    values: Option<ZkQueryValues>,
-    limit: Option<ZkQueryLimit>,
-}
-
-#[derive(Debug, Default, Clone)]
-struct ZkQueryValues {
-    variables: Vec<Variable>,
-    bindings: Vec<Vec<Option<GroundTerm>>>,
-}
-
-#[derive(Debug, Default, Clone)]
-struct ZkQueryLimit {
-    start: usize,
-    length: Option<usize>,
 }
 
 /// Evaluate a zk-SPARQL query on the Fetch endpoint
@@ -466,153 +388,6 @@ fn build_disclosed_subject(
     };
 
     Ok(Quad::new(s, p, o, g))
-}
-
-// parse a zk-SPARQL query
-fn parse_zk_query(query: &str, base_iri: Option<&str>) -> Result<ZkQuery, ZkSparqlError> {
-    let parsed_query =
-        spargebra::Query::parse(query, base_iri).map_err(ZkSparqlError::InvalidSparqlQuery)?;
-    match parsed_query {
-        spargebra::Query::Construct { .. } => Err(ZkSparqlError::ConstructNotSupported),
-        spargebra::Query::Describe { .. } => Err(ZkSparqlError::DescribeNotSupported),
-        spargebra::Query::Select {
-            dataset,
-            pattern,
-            base_iri,
-        } => parse_zk_select(dataset, pattern, base_iri),
-        spargebra::Query::Ask {
-            dataset,
-            pattern,
-            base_iri,
-        } => parse_zk_ask(dataset, pattern, base_iri),
-    }
-}
-
-fn parse_zk_select(
-    _dataset: Option<QueryDataset>,
-    pattern: GraphPattern,
-    _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, ZkSparqlError> {
-    println!("original pattern: {:#?}", pattern);
-
-    match pattern {
-        GraphPattern::Slice {
-            inner,
-            start,
-            length,
-        } => match *inner {
-            GraphPattern::Project { inner, variables } => {
-                parse_zk_common(*inner, variables, Some(ZkQueryLimit { start, length }))
-            }
-            _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
-        },
-        GraphPattern::Project { inner, variables } => parse_zk_common(*inner, variables, None),
-        _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
-    }
-}
-
-fn parse_zk_ask(
-    _dataset: Option<QueryDataset>,
-    pattern: GraphPattern,
-    _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, ZkSparqlError> {
-    println!("original pattern: {:#?}", pattern);
-
-    match pattern {
-        GraphPattern::Slice {
-            inner,
-            start,
-            length,
-        } => parse_zk_common(*inner, vec![], Some(ZkQueryLimit { start, length })),
-        _ => parse_zk_common(pattern, vec![], None),
-    }
-}
-
-struct ZkBgpAndValues {
-    bgp: Vec<TriplePattern>,
-    values: Option<ZkQueryValues>,
-}
-
-fn parse_zk_common(
-    pattern: GraphPattern,
-    disclosed_variables: Vec<Variable>,
-    limit: Option<ZkQueryLimit>,
-) -> Result<ZkQuery, ZkSparqlError> {
-    let mut in_scope_variables = HashSet::new();
-    pattern.on_in_scope_variable(|v| {
-        in_scope_variables.insert(v.clone());
-    });
-    let patterns: Vec<TriplePattern>;
-    let mut filter: Option<Expression> = None;
-    let mut values: Option<ZkQueryValues> = None;
-
-    match pattern {
-        GraphPattern::Filter { expr, inner } => {
-            filter = Some(expr);
-            match *inner {
-                GraphPattern::Bgp { patterns: bgp } => {
-                    patterns = bgp;
-                }
-                GraphPattern::Join { left, right } => match parse_zk_values(*left, *right) {
-                    Ok(ZkBgpAndValues { bgp, values: v }) => {
-                        patterns = bgp;
-                        values = v;
-                    }
-                    Err(e) => return Err(e),
-                },
-                _ => return Err(ZkSparqlError::InvalidZkSparqlQuery),
-            };
-        }
-        GraphPattern::Bgp { patterns: bgp } => {
-            patterns = bgp;
-        }
-        GraphPattern::Join { left, right } => match parse_zk_values(*left, *right) {
-            Ok(ZkBgpAndValues { bgp, values: v }) => {
-                patterns = bgp;
-                values = v;
-            }
-            Err(e) => return Err(e),
-        },
-        _ => return Err(ZkSparqlError::InvalidZkSparqlQuery),
-    };
-
-    Ok(ZkQuery {
-        disclosed_variables,
-        in_scope_variables,
-        patterns,
-        filter,
-        values,
-        limit,
-    })
-}
-
-fn parse_zk_values(
-    left: GraphPattern,
-    right: GraphPattern,
-) -> Result<ZkBgpAndValues, ZkSparqlError> {
-    match (left, right) {
-        (
-            GraphPattern::Values {
-                variables,
-                bindings,
-            },
-            GraphPattern::Bgp { patterns: bgp },
-        )
-        | (
-            GraphPattern::Bgp { patterns: bgp },
-            GraphPattern::Values {
-                variables,
-                bindings,
-            },
-        ) => Ok(ZkBgpAndValues {
-            bgp,
-            values: Some(ZkQueryValues {
-                variables,
-                bindings,
-            }),
-        }),
-        _ => Err(ZkSparqlError::InvalidZkSparqlQuery),
-    }
 }
 
 // construct an extended query to identify credentials to be disclosed
