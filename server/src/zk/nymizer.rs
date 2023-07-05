@@ -1,11 +1,12 @@
 use super::{
     error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, PSEUDONYMOUS_VAR_PREFIX, PSEUDONYM_ALPHABETS,
-    SKOLEM_IRI_PREFIX,
+    SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
 use nanoid::nanoid;
+use oxigraph::sparql::QuerySolutionIter;
 use oxrdf::{Literal, NamedNode, Term, Variable};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct PseudonymousSolutions {
     pub solutions: Vec<HashMap<Variable, Term>>,
@@ -51,4 +52,47 @@ impl Pseudonymizer {
             .map(|((_, t), nym)| (nym.clone(), t.clone()))
             .collect()
     }
+}
+
+pub fn build_pseudonymous_solutions(
+    solutions: QuerySolutionIter,
+    disclosed_variables: &[Variable],
+) -> Result<PseudonymousSolutions, ZkSparqlError> {
+    let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
+    let mut pseudonymizer = Pseudonymizer::default();
+
+    let pseudonymous_solutions: Result<Vec<HashMap<_, _>>, ZkSparqlError> = solutions
+        .map(|solution| {
+            solution?
+                .iter()
+                .map(|(var, term)| {
+                    let pseudonymized_term = if disclosed_variables.contains(var) {
+                        term.clone()
+                    } else if var.as_str().starts_with(VC_VARIABLE_PREFIX) {
+                        match term {
+                            Term::NamedNode(n) => {
+                                if n.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) {
+                                    Term::NamedNode(NamedNode::new(
+                                        &n.as_str()
+                                            [0..(n.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
+                                    )?)
+                                } else {
+                                    return Err(ZkSparqlError::FailedBuildingPseudonymousSolution);
+                                }
+                            }
+                            _ => return Err(ZkSparqlError::FailedBuildingPseudonymousSolution),
+                        }
+                    } else {
+                        pseudonymizer.issue(var, term)?
+                    };
+                    Ok((var.clone(), pseudonymized_term))
+                })
+                .collect()
+        })
+        .collect();
+
+    Ok(PseudonymousSolutions {
+        solutions: pseudonymous_solutions?,
+        deanon_map: pseudonymizer.get_inverse(),
+    })
 }

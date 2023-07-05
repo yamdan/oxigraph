@@ -8,11 +8,11 @@ use crate::{
     zk::{
         builder::{
             build_credential_metadata, build_disclosed_subjects, build_extended_fetch_query,
-            build_extended_prove_query, build_proofs, build_pseudonymous_solutions,
+            build_extended_prove_query, build_proofs,
         },
         error::ZkSparqlError,
-        nymizer::PseudonymousSolutions,
-        parser::{parse_zk_query, ZkQuery},
+        nymizer::{build_pseudonymous_solutions, PseudonymousSolutions},
+        parser::parse_zk_query,
     },
     HttpError, ReadForWrite,
 };
@@ -190,14 +190,4 @@ fn evaluate_zksparql_prove(
     //     },
     //     format.media_type(),
     // )
-}
-
-fn prove(
-    store: &Store,
-    parsed_zk_query: &ZkQuery,
-    extended_results: &QueryResults,
-) -> Option<String> {
-    println!("!!! prove (TBD) !!!");
-
-    Some("".to_string())
 }

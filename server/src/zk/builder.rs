@@ -1,14 +1,11 @@
 use super::{
     error::ZkSparqlError,
-    nymizer::{Pseudonymizer, PseudonymousSolutions},
     parser::{ZkQuery, ZkQueryValues},
     PROOF_GRAPH_SUFFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
-use oxigraph::{sparql::QuerySolutionIter, store::Store};
-use oxrdf::{
-    GraphName, GraphNameRef, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, Variable,
-};
+use oxigraph::store::Store;
+use oxrdf::{GraphName, GraphNameRef, Literal, NamedNodeRef, Quad, Subject, Term, Variable};
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
     term::{NamedNodePattern, TermPattern, TriplePattern},
@@ -25,164 +22,6 @@ struct ExtendedQuery {
 pub struct TriplePatternWithGraphVar {
     triple_pattern: TriplePattern,
     graph_var: Variable,
-}
-
-pub fn build_pseudonymous_solutions(
-    solutions: QuerySolutionIter,
-    disclosed_variables: &[Variable],
-) -> Result<PseudonymousSolutions, ZkSparqlError> {
-    let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
-    let mut pseudonymizer = Pseudonymizer::default();
-
-    let pseudonymous_solutions: Result<Vec<HashMap<_, _>>, ZkSparqlError> = solutions
-        .map(|solution| {
-            solution?
-                .iter()
-                .map(|(var, term)| {
-                    let pseudonymized_term = if disclosed_variables.contains(var) {
-                        term.clone()
-                    } else if var.as_str().starts_with(VC_VARIABLE_PREFIX) {
-                        match term {
-                            Term::NamedNode(n) => {
-                                if n.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) {
-                                    Term::NamedNode(NamedNode::new(
-                                        &n.as_str()
-                                            [0..(n.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
-                                    )?)
-                                } else {
-                                    return Err(ZkSparqlError::FailedBuildingPseudonymousSolution);
-                                }
-                            }
-                            _ => return Err(ZkSparqlError::FailedBuildingPseudonymousSolution),
-                        }
-                    } else {
-                        pseudonymizer.issue(var, term)?
-                    };
-                    Ok((var.clone(), pseudonymized_term))
-                })
-                .collect()
-        })
-        .collect();
-
-    Ok(PseudonymousSolutions {
-        solutions: pseudonymous_solutions?,
-        deanon_map: pseudonymizer.get_inverse(),
-    })
-}
-
-pub fn build_credential_metadata(
-    cred_ids: &HashSet<GraphName>,
-    store: &Store,
-) -> Result<Vec<Quad>, ZkSparqlError> {
-    let creds = cred_ids
-        .iter()
-        .map(|cred_id| {
-            store
-                .quads_for_pattern(None, None, None, Some(cred_id.into()))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(creds.into_iter().flatten().collect())
-}
-
-pub fn build_proofs(
-    cred_ids: &HashSet<GraphName>,
-    store: &Store,
-) -> Result<Vec<Quad>, ZkSparqlError> {
-    let proofs = cred_ids
-        .iter()
-        .map(|cred_id| {
-            let proof_id = match cred_id {
-                GraphName::NamedNode(n) => format!("{}{}", n.as_str(), PROOF_GRAPH_SUFFIX),
-                _ => return Err(ZkSparqlError::FailedBuildingDisclosedDataset),
-            };
-            Ok(store
-                .quads_for_pattern(
-                    None,
-                    None,
-                    None,
-                    Some(GraphNameRef::from(NamedNodeRef::new(&proof_id)?)),
-                )
-                .collect::<Result<Vec<_>, _>>()?)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(proofs.into_iter().flatten().collect())
-}
-
-pub fn build_disclosed_subjects(
-    solutions: &[HashMap<Variable, Term>],
-    extended_triple_patterns: &[TriplePatternWithGraphVar],
-) -> Result<Vec<Quad>, ZkSparqlError> {
-    let disclosed_subjects = solutions
-        .iter()
-        .map(|solution| {
-            extended_triple_patterns
-                .iter()
-                .map(|pattern| build_disclosed_subject(solution, pattern))
-                .collect::<Result<Vec<_>, ZkSparqlError>>()
-        })
-        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
-    Ok(disclosed_subjects.into_iter().flatten().collect())
-}
-
-fn build_disclosed_subject(
-    solution: &HashMap<Variable, Term>,
-    pattern_with_graph_var: &TriplePatternWithGraphVar,
-) -> Result<Quad, ZkSparqlError> {
-    let TriplePatternWithGraphVar {
-        triple_pattern,
-        graph_var,
-    } = pattern_with_graph_var;
-
-    let g = match solution
-        .get(graph_var)
-        .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
-    {
-        Term::NamedNode(n) => GraphName::NamedNode(n.clone()),
-        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
-    };
-
-    let s = match &triple_pattern.subject {
-        TermPattern::Variable(v) => {
-            let term = solution
-                .get(v)
-                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?;
-            match term {
-                Term::NamedNode(n) => Subject::NamedNode(n.clone()),
-                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
-            }
-        }
-        TermPattern::NamedNode(n) => Subject::NamedNode(n.clone()),
-        TermPattern::BlankNode(n) => Subject::BlankNode(n.clone()),
-        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
-    };
-
-    let p = match &triple_pattern.predicate {
-        NamedNodePattern::Variable(v) => {
-            let term = solution
-                .get(v)
-                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
-                .clone();
-            match term {
-                Term::NamedNode(n) => n,
-                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
-            }
-        }
-        NamedNodePattern::NamedNode(n) => n.clone(),
-    };
-
-    let o = match &triple_pattern.object {
-        TermPattern::Variable(v) => solution
-            .get(v)
-            .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
-            .clone(),
-        TermPattern::NamedNode(n) => Term::NamedNode(n.clone()),
-        TermPattern::BlankNode(n) => Term::BlankNode(n.clone()),
-        TermPattern::Literal(n) => Term::Literal(n.clone()),
-        TermPattern::Triple(_) => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
-    };
-
-    Ok(Quad::new(s, p, o, g))
 }
 
 pub fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
@@ -383,4 +222,119 @@ fn build_extended_query(
         pattern: extended_graph_pattern,
         variables: extended_variables,
     })
+}
+
+pub fn build_disclosed_subjects(
+    solutions: &[HashMap<Variable, Term>],
+    extended_triple_patterns: &[TriplePatternWithGraphVar],
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let disclosed_subjects = solutions
+        .iter()
+        .map(|solution| {
+            extended_triple_patterns
+                .iter()
+                .map(|pattern| build_disclosed_subject(solution, pattern))
+                .collect::<Result<Vec<_>, ZkSparqlError>>()
+        })
+        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
+    Ok(disclosed_subjects.into_iter().flatten().collect())
+}
+
+fn build_disclosed_subject(
+    solution: &HashMap<Variable, Term>,
+    pattern_with_graph_var: &TriplePatternWithGraphVar,
+) -> Result<Quad, ZkSparqlError> {
+    let TriplePatternWithGraphVar {
+        triple_pattern,
+        graph_var,
+    } = pattern_with_graph_var;
+
+    let g = match solution
+        .get(graph_var)
+        .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+    {
+        Term::NamedNode(n) => GraphName::NamedNode(n.clone()),
+        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    let s = match &triple_pattern.subject {
+        TermPattern::Variable(v) => {
+            let term = solution
+                .get(v)
+                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?;
+            match term {
+                Term::NamedNode(n) => Subject::NamedNode(n.clone()),
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+            }
+        }
+        TermPattern::NamedNode(n) => Subject::NamedNode(n.clone()),
+        TermPattern::BlankNode(n) => Subject::BlankNode(n.clone()),
+        _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    let p = match &triple_pattern.predicate {
+        NamedNodePattern::Variable(v) => {
+            let term = solution
+                .get(v)
+                .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+                .clone();
+            match term {
+                Term::NamedNode(n) => n,
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+            }
+        }
+        NamedNodePattern::NamedNode(n) => n.clone(),
+    };
+
+    let o = match &triple_pattern.object {
+        TermPattern::Variable(v) => solution
+            .get(v)
+            .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+            .clone(),
+        TermPattern::NamedNode(n) => Term::NamedNode(n.clone()),
+        TermPattern::BlankNode(n) => Term::BlankNode(n.clone()),
+        TermPattern::Literal(n) => Term::Literal(n.clone()),
+        TermPattern::Triple(_) => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
+    };
+
+    Ok(Quad::new(s, p, o, g))
+}
+
+pub fn build_credential_metadata(
+    cred_ids: &HashSet<GraphName>,
+    store: &Store,
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let creds = cred_ids
+        .iter()
+        .map(|cred_id| {
+            store
+                .quads_for_pattern(None, None, None, Some(cred_id.into()))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(creds.into_iter().flatten().collect())
+}
+
+pub fn build_proofs(
+    cred_ids: &HashSet<GraphName>,
+    store: &Store,
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let proofs = cred_ids
+        .iter()
+        .map(|cred_id| {
+            let proof_id = match cred_id {
+                GraphName::NamedNode(n) => format!("{}{}", n.as_str(), PROOF_GRAPH_SUFFIX),
+                _ => return Err(ZkSparqlError::FailedBuildingDisclosedDataset),
+            };
+            Ok(store
+                .quads_for_pattern(
+                    None,
+                    None,
+                    None,
+                    Some(GraphNameRef::from(NamedNodeRef::new(&proof_id)?)),
+                )
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(proofs.into_iter().flatten().collect())
 }
