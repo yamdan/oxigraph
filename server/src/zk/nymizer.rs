@@ -15,8 +15,8 @@ pub struct PseudonymousSolutions {
 
 #[derive(Default)]
 pub struct Pseudonymizer {
-    iri_mapping: HashMap<NamedNode, NamedNode>,
-    literal_mapping: HashMap<Literal, NamedNode>,
+    iri_to_nym: HashMap<NamedNode, NamedNode>,
+    nym_to_literal: HashMap<NamedNode, Term>,
 }
 
 impl Pseudonymizer {
@@ -30,36 +30,30 @@ impl Pseudonymizer {
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
     }
 
-    fn issue_iri(&mut self, iri: &NamedNode) -> NamedNode {
-        if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
-            iri.clone()
-        } else {
-            self.iri_mapping
-                .entry(iri.clone())
-                .or_insert(Self::generate_pseudonymous_iri())
-                .clone()
-        }
+    fn issue_iri_nym(&mut self, iri: &NamedNode) -> NamedNode {
+        let nym = Self::generate_pseudonymous_iri();
+        self.iri_to_nym.entry(iri.clone()).or_insert(nym).clone()
     }
 
-    fn issue_literal(&mut self, literal: &Literal) -> NamedNode {
+    fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
+        self.iri_to_nym.get(iri).cloned()
+    }
+
+    fn issue_literal_nym(&mut self, literal: &Literal) -> NamedNode {
         let nym = Self::generate_pseudonymous_var();
-        self.literal_mapping.insert(literal.clone(), nym.clone());
+        self.nym_to_literal
+            .insert(nym.clone(), Term::Literal(literal.clone()));
         nym
     }
 
-    fn get_inverse(&self) -> HashMap<NamedNode, Term> {
-        let mut iri_mapping_inverse: HashMap<NamedNode, Term> = self
-            .iri_mapping
+    fn get_deanon_map(&self) -> HashMap<NamedNode, Term> {
+        let mut nym_to_iri: HashMap<NamedNode, Term> = self
+            .iri_to_nym
             .iter()
             .map(|(iri, nym)| (nym.clone(), Term::NamedNode(iri.clone())))
             .collect();
-        let literal_mapping_inverse: HashMap<NamedNode, Term> = self
-            .literal_mapping
-            .iter()
-            .map(|(literal, nym)| (nym.clone(), Term::Literal(literal.clone())))
-            .collect();
-        iri_mapping_inverse.extend(literal_mapping_inverse);
-        iri_mapping_inverse
+        nym_to_iri.extend(self.nym_to_literal.clone());
+        nym_to_iri
     }
 
     pub fn pseudonymize_solutions(
@@ -90,8 +84,11 @@ impl Pseudonymizer {
                             }
                         } else {
                             match term {
-                                Term::NamedNode(n) => Term::NamedNode(self.issue_iri(n)),
-                                Term::Literal(l) => Term::NamedNode(self.issue_literal(l)),
+                                Term::NamedNode(n) if n.as_str().starts_with(SKOLEM_IRI_PREFIX) => {
+                                    term.clone()
+                                }
+                                Term::NamedNode(n) => Term::NamedNode(self.issue_iri_nym(n)),
+                                Term::Literal(l) => Term::NamedNode(self.issue_literal_nym(l)),
                                 _ => return Err(ZkSparqlError::FailedBuildingPseudonymousSolution),
                             }
                         };
@@ -103,7 +100,7 @@ impl Pseudonymizer {
 
         Ok(PseudonymousSolutions {
             solutions: pseudonymous_solutions?,
-            deanon_map: self.get_inverse(),
+            deanon_map: self.get_deanon_map(),
         })
     }
 }
