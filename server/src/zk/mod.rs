@@ -7,7 +7,7 @@ use crate::{
     bad_request, base_url, query_results_content_negotiation,
     zk::{
         builder::{
-            build_credential_metadata, build_disclosed_subjects, build_extended_fetch_query,
+            build_metadata, build_disclosed_subjects, build_extended_fetch_query,
             build_extended_prove_query, build_proofs,
         },
         error::ZkSparqlError,
@@ -143,12 +143,12 @@ fn evaluate_zksparql_prove(
     // 6. build disclosed dataset and proofs
     let cred_graph_ids: HashSet<_> = disclosed_subjects
         .iter()
-        .map(|quad| quad.graph_name.clone())
+        .map(|quad| quad.graph_name.as_ref())
         .collect();
 
-    let mut disclosed_dataset = build_credential_metadata(&cred_graph_ids, store, &mut nymizer)?;
+    let mut disclosed_dataset = build_metadata(&cred_graph_ids, store, &mut nymizer)?;
+    let proofs = build_proofs(&cred_graph_ids, store, &mut nymizer)?;
     disclosed_dataset.append(&mut disclosed_subjects);
-    let proofs = build_proofs(&cred_graph_ids, store)?;
     println!(
         "disclosed dataset: {}",
         disclosed_dataset

@@ -307,61 +307,75 @@ fn build_disclosed_subject(
     Ok(Quad::new(s, p, o, g))
 }
 
-pub fn build_credential_metadata(
-    cred_graph_ids: &HashSet<GraphName>,
+pub fn build_metadata(
+    cred_graph_ids: &HashSet<GraphNameRef>,
     store: &Store,
     nymizer: &mut Pseudonymizer,
 ) -> Result<Vec<Quad>, ZkSparqlError> {
-    let creds: Vec<Vec<Quad>> = cred_graph_ids
-        .iter()
-        .map(|cred_graph_id| {
-            let credential_metadata: Vec<Quad> = store
-                .quads_for_pattern(None, None, None, Some(cred_graph_id.into()))
-                .collect::<Result<_, _>>()?;
-            let credential_ids: HashSet<NamedNode> = store
-                .quads_for_pattern(
-                    None,
-                    Some(NamedNodeRef::new_unchecked(RDF_TYPE)),
-                    Some(TermRef::from(NamedNodeRef::new_unchecked(
-                        VERIFIABLE_CREDENTIAL,
-                    ))),
-                    Some(cred_graph_id.into()),
-                )
-                .map(|quad| match quad?.subject {
-                    Subject::NamedNode(n) => Ok(n),
-                    Subject::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
-                    Subject::Triple(_) => Err(ZkSparqlError::FailedBuildingCredentialMetadata),
-                })
-                .collect::<Result<_, _>>()?;
-            credential_metadata
-                .into_iter()
-                .map(|quad| nymizer.pseudonymize_quad(quad, &credential_ids))
-                .collect()
-        })
-        .collect::<Result<_, _>>()?;
-    Ok(creds.into_iter().flatten().collect())
+    build_metadata_or_proofs(
+        cred_graph_ids,
+        Some(NamedNodeRef::new(RDF_TYPE)?),
+        Some(TermRef::from(NamedNodeRef::new_unchecked(
+            VERIFIABLE_CREDENTIAL,
+        ))),
+        store,
+        nymizer,
+    )
 }
 
 pub fn build_proofs(
-    cred_graph_ids: &HashSet<GraphName>,
+    cred_graph_ids: &HashSet<GraphNameRef>,
     store: &Store,
+    nymizer: &mut Pseudonymizer,
 ) -> Result<Vec<Quad>, ZkSparqlError> {
-    let proofs = cred_graph_ids
+    let proof_graph_ids: HashSet<GraphName> = cred_graph_ids
         .iter()
-        .map(|cred_id| {
-            let proof_id = match cred_id {
-                GraphName::NamedNode(n) => format!("{}{}", n.as_str(), PROOF_GRAPH_SUFFIX),
-                _ => return Err(ZkSparqlError::FailedBuildingDisclosedDataset),
-            };
-            Ok(store
-                .quads_for_pattern(
-                    None,
-                    None,
-                    None,
-                    Some(GraphNameRef::from(NamedNodeRef::new(&proof_id)?)),
-                )
-                .collect::<Result<Vec<_>, _>>()?)
+        .map(|cred_graph_id| match cred_graph_id {
+            GraphNameRef::NamedNode(n) => Ok(GraphName::NamedNode(NamedNode::new(format!(
+                "{}{}",
+                n.as_str(),
+                PROOF_GRAPH_SUFFIX
+            ))?)),
+            _ => Err(ZkSparqlError::FailedBuildingDisclosedDataset),
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<_, _>>()?;
+    let proof_graph_ids: HashSet<_> = proof_graph_ids.iter().map(GraphName::as_ref).collect();
+
+    build_metadata_or_proofs(
+        &proof_graph_ids,
+        Some(NamedNodeRef::new(RDF_TYPE)?),
+        None, // TODO: `?s rdf:type _:o` is sufficient to identify the proof subject (?s) in the proof graph?
+        store,
+        nymizer,
+    )
+}
+
+fn build_metadata_or_proofs(
+    graph_ids: &HashSet<GraphNameRef<'_>>,
+    predicate: Option<NamedNodeRef>,
+    object: Option<TermRef>,
+    store: &Store,
+    nymizer: &mut Pseudonymizer,
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let mut pull_and_nymize = |graph_id, predicate, object| {
+        let additional_targets: HashSet<NamedNode> = store
+            .quads_for_pattern(None, predicate, object, Some(graph_id))
+            .map(|quad| match quad?.subject {
+                Subject::NamedNode(n) => Ok(n),
+                Subject::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
+                Subject::Triple(_) => Err(ZkSparqlError::FailedBuildingCredentialMetadata),
+            })
+            .collect::<Result<_, _>>()?;
+
+        store
+            .quads_for_pattern(None, None, None, Some(graph_id)) // pull
+            .map(|quad| nymizer.pseudonymize_quad(quad?, &additional_targets)) // pseudonymize
+            .collect()
+    };
+
+    let proofs: Vec<Vec<Quad>> = graph_ids
+        .iter()
+        .map(|proof_graph_id| pull_and_nymize(*proof_graph_id, predicate, object))
+        .collect::<Result<_, _>>()?;
     Ok(proofs.into_iter().flatten().collect())
 }
