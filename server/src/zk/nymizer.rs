@@ -26,8 +26,12 @@ impl Pseudonymizer {
     }
 
     fn issue_iri_nym(&mut self, iri: &NamedNode) -> NamedNode {
-        let nym = Self::generate_pseudonymous_iri();
-        self.iri_to_nym.entry(iri.clone()).or_insert(nym).clone()
+        if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
+            iri.clone() // do not issue nym for Skolem IRI
+        } else {
+            let nym = Self::generate_pseudonymous_iri();
+            self.iri_to_nym.entry(iri.clone()).or_insert(nym).clone()
+        }
     }
 
     fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
@@ -79,9 +83,6 @@ impl Pseudonymizer {
                             term.clone()
                         } else {
                             match term {
-                                Term::NamedNode(n) if n.as_str().starts_with(SKOLEM_IRI_PREFIX) => {
-                                    term.clone()
-                                }
                                 Term::NamedNode(n) => Term::NamedNode(self.issue_iri_nym(n)),
                                 Term::Literal(l) => Term::NamedNode(self.issue_literal_nym(l)),
                                 Term::BlankNode(n) => {
@@ -105,44 +106,34 @@ impl Pseudonymizer {
         quad: Quad,
         additional_targets: &HashSet<NamedNode>,
     ) -> Result<Quad, ZkSparqlError> {
+        let mut pseudonymize_iri = |iri| {
+            if additional_targets.contains(&iri) {
+                self.issue_iri_nym(&iri)
+            } else {
+                match self.get_iri_nym(&iri) {
+                    Some(nym) => nym,
+                    None => iri,
+                }
+            }
+        };
+
         let s = match quad.subject {
-            Subject::NamedNode(iri) => Ok(Subject::NamedNode(
-                self.pseudonymize_iri(iri, additional_targets),
-            )),
+            Subject::NamedNode(iri) => Ok(Subject::NamedNode(pseudonymize_iri(iri))),
             Subject::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
             Subject::Triple(_) => Err(ZkSparqlError::FailedPseudonymizingQuad),
         }?;
-        let p = self.pseudonymize_iri(quad.predicate, additional_targets);
+        let p = pseudonymize_iri(quad.predicate);
         let o = match quad.object {
-            Term::NamedNode(iri) => Ok(Term::NamedNode(
-                self.pseudonymize_iri(iri, additional_targets),
-            )),
+            Term::NamedNode(iri) => Ok(Term::NamedNode(pseudonymize_iri(iri))),
             Term::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
             Term::Literal(l) => Ok(Term::Literal(l)),
             Term::Triple(_) => Err(ZkSparqlError::FailedPseudonymizingQuad),
         }?;
         let g = match quad.graph_name {
-            GraphName::NamedNode(iri) => Ok(GraphName::NamedNode(
-                self.pseudonymize_iri(iri, additional_targets),
-            )),
+            GraphName::NamedNode(iri) => Ok(GraphName::NamedNode(pseudonymize_iri(iri))),
             GraphName::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
             GraphName::DefaultGraph => Ok(quad.graph_name),
         }?;
         Ok(Quad::new(s, p, o, g))
-    }
-
-    fn pseudonymize_iri(
-        &mut self,
-        iri: NamedNode,
-        additional_targets: &HashSet<NamedNode>,
-    ) -> NamedNode {
-        if additional_targets.contains(&iri) {
-            self.issue_iri_nym(&iri)
-        } else {
-            match self.get_iri_nym(&iri) {
-                Some(nym) => nym,
-                None => iri,
-            }
-        }
     }
 }
