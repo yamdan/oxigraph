@@ -7,8 +7,8 @@ use crate::{
     bad_request, base_url, query_results_content_negotiation,
     zk::{
         builder::{
-            build_metadata, build_disclosed_subjects, build_extended_fetch_query,
-            build_extended_prove_query, build_proofs,
+            build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
+            build_metadata, build_proofs, get_proof_values,
         },
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
@@ -143,11 +143,12 @@ fn evaluate_zksparql_prove(
     // 6. build disclosed dataset and proofs
     let cred_graph_ids: HashSet<_> = disclosed_subjects
         .iter()
-        .map(|quad| quad.graph_name.as_ref())
+        .map(|quad| quad.graph_name.clone())
         .collect();
 
     let mut disclosed_dataset = build_metadata(&cred_graph_ids, store, &mut nymizer)?;
     let proofs = build_proofs(&cred_graph_ids, store, &mut nymizer)?;
+    let proof_values = get_proof_values(&cred_graph_ids, store)?;
     disclosed_dataset.append(&mut disclosed_subjects);
     println!(
         "disclosed dataset: {}",
@@ -165,6 +166,7 @@ fn evaluate_zksparql_prove(
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );
+    println!("proof values: {:#?}", proof_values);
 
     let deanon_map = nymizer.get_deanon_map();
     println!("deanon map: {:#?}", deanon_map);

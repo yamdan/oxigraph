@@ -18,6 +18,7 @@ pub enum ZkSparqlError {
     FailedBuildingDisclosedDataset,
     FailedBuildingCredentialMetadata,
     BlankNodeMustBeSkolemized(BlankNode),
+    InvalidProofValues,
 }
 
 impl From<EvaluationError> for ZkSparqlError {
@@ -72,6 +73,9 @@ impl From<ZkSparqlError> for HttpError {
                 "input blank node must be skolemized: {}",
                 blank_node
             )),
+            ZkSparqlError::InvalidProofValues => {
+                bad_request("one proof must contain only one proof value")
+            }
         }
     }
 }
