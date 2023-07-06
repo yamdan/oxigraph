@@ -1,16 +1,23 @@
 use super::{
     error::ZkSparqlError,
+    nymizer::Pseudonymizer,
     parser::{ZkQuery, ZkQueryValues},
     PROOF_GRAPH_SUFFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
 use oxigraph::store::Store;
-use oxrdf::{GraphName, GraphNameRef, Literal, NamedNodeRef, Quad, Subject, Term, Variable};
+use oxrdf::{
+    GraphName, GraphNameRef, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, TermRef,
+    Variable,
+};
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
     term::{NamedNodePattern, TermPattern, TriplePattern},
 };
 use std::collections::{HashMap, HashSet};
+
+const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+const VERIFIABLE_CREDENTIAL: &str = "https://www.w3.org/2018/credentials#VerifiableCredential";
 
 // construct an extended query to identify credentials to be disclosed
 struct ExtendedQuery {
@@ -301,18 +308,47 @@ fn build_disclosed_subject(
 }
 
 pub fn build_credential_metadata(
-    cred_ids: &HashSet<GraphName>,
+    cred_graph_ids: &HashSet<GraphName>,
     store: &Store,
+    nymizer: &mut Pseudonymizer,
 ) -> Result<Vec<Quad>, ZkSparqlError> {
-    let creds = cred_ids
+    let creds = cred_graph_ids
         .iter()
-        .map(|cred_id| {
-            store
-                .quads_for_pattern(None, None, None, Some(cred_id.into()))
-                .collect::<Result<Vec<_>, _>>()
+        .map(|cred_graph_id| {
+            let quads = store
+                .quads_for_pattern(None, None, None, Some(cred_graph_id.into()))
+                .collect::<Result<Vec<_>, _>>();
+            let cred_ids: Vec<_> = store
+                .quads_for_pattern(
+                    None,
+                    Some(NamedNodeRef::new_unchecked(RDF_TYPE)),
+                    Some(TermRef::from(NamedNodeRef::new_unchecked(
+                        VERIFIABLE_CREDENTIAL,
+                    ))),
+                    Some(cred_graph_id.into()),
+                )
+                .map(|quad| quad.map(|quad| quad.subject))
+                .collect::<Result<Vec<_>, _>>()?;
+            let cred_ids: HashSet<NamedNode> = cred_ids
+                .iter()
+                .map(|c| match c {
+                    Subject::NamedNode(n) => Ok(n.clone()),
+                    Subject::BlankNode(n) => {
+                        Err(ZkSparqlError::BlankNodeMustBeSkolemized(n.clone()))
+                    }
+                    Subject::Triple(_) => Err(ZkSparqlError::FailedBuildingCredentialMetadata),
+                })
+                .collect::<Result<HashSet<_>, _>>()?;
+            match quads {
+                Ok(quads) => Ok(quads
+                    .into_iter()
+                    .map(|quad| nymizer.pseudonymize_quad(quad, &cred_ids))
+                    .collect::<Vec<_>>()),
+                Err(_) => Err(ZkSparqlError::FailedBuildingCredentialMetadata),
+            }
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(creds.into_iter().flatten().collect())
+    creds.into_iter().flatten().collect()
 }
 
 pub fn build_proofs(

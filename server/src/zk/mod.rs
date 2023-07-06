@@ -11,7 +11,7 @@ use crate::{
             build_extended_prove_query, build_proofs,
         },
         error::ZkSparqlError,
-        nymizer::{Pseudonymizer, PseudonymousSolutions},
+        nymizer::Pseudonymizer,
         parser::parse_zk_query,
     },
     HttpError, ReadForWrite,
@@ -132,15 +132,13 @@ fn evaluate_zksparql_prove(
 
     // 4. pseudonymize the extended prove solutions
     let mut nymizer = Pseudonymizer::default();
-    let PseudonymousSolutions {
-        solutions,
-        deanon_map,
-    } = nymizer.pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
-    println!("pseudonymous solutions: {:#?}", solutions);
-    println!("deanon map: {:#?}", deanon_map);
+    let pseudonymized_solutions =
+        nymizer.pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
+    println!("pseudonymous solutions: {:#?}", pseudonymized_solutions);
 
     // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
-    let mut disclosed_subjects = build_disclosed_subjects(&solutions, &extended_triple_patterns)?;
+    let mut disclosed_subjects =
+        build_disclosed_subjects(&pseudonymized_solutions, &extended_triple_patterns)?;
 
     // 6. build disclosed dataset and proofs
     let cred_ids: HashSet<_> = disclosed_subjects
@@ -148,7 +146,7 @@ fn evaluate_zksparql_prove(
         .map(|quad| quad.graph_name.clone())
         .collect();
 
-    let mut disclosed_dataset = build_credential_metadata(&cred_ids, store)?;
+    let mut disclosed_dataset = build_credential_metadata(&cred_ids, store, &mut nymizer)?;
     disclosed_dataset.append(&mut disclosed_subjects);
     println!(
         "disclosed dataset: {}",
@@ -168,6 +166,9 @@ fn evaluate_zksparql_prove(
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );
+
+    let deanon_map = nymizer.get_deanon_map();
+    println!("deanon map: {:#?}", deanon_map);
 
     // x. return query results
     todo!()

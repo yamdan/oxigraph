@@ -2,6 +2,7 @@ use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
+use oxrdf::BlankNode;
 use spargebra::ParseError;
 
 pub enum ZkSparqlError {
@@ -11,9 +12,12 @@ pub enum ZkSparqlError {
     InvalidZkSparqlQuery,
     SparqlEvaluationError(EvaluationError),
     ExtendedQueryFailed,
-    FailedBuildingPseudonymousSolution,
+    FailedPseudonymizingSolution,
+    FailedPseudonymizingQuad,
     FailedBuildingDisclosedSubject,
     FailedBuildingDisclosedDataset,
+    FailedBuildingCredentialMetadata,
+    BlankNodeMustBeSkolemized(BlankNode),
 }
 
 impl From<EvaluationError> for ZkSparqlError {
@@ -24,7 +28,7 @@ impl From<EvaluationError> for ZkSparqlError {
 
 impl From<IriParseError> for ZkSparqlError {
     fn from(_: IriParseError) -> Self {
-        Self::FailedBuildingPseudonymousSolution
+        Self::FailedPseudonymizingSolution
     }
 }
 
@@ -51,15 +55,23 @@ impl From<ZkSparqlError> for HttpError {
                 bad_request(format!("sparql evaluation failed: {}", e))
             }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
-            ZkSparqlError::FailedBuildingPseudonymousSolution => {
-                bad_request("building pseudonymous solution failed")
+            ZkSparqlError::FailedPseudonymizingSolution => {
+                bad_request("pseudonymizing solution failed")
             }
+            ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
             ZkSparqlError::FailedBuildingDisclosedSubject => {
                 bad_request("building disclosed subject failed")
             }
             ZkSparqlError::FailedBuildingDisclosedDataset => {
                 bad_request("building disclosed dataset failed")
             }
+            ZkSparqlError::FailedBuildingCredentialMetadata => {
+                bad_request("building credential metadata failed")
+            }
+            ZkSparqlError::BlankNodeMustBeSkolemized(blank_node) => bad_request(format!(
+                "input blank node must be skolemized: {}",
+                blank_node
+            )),
         }
     }
 }
