@@ -12,30 +12,32 @@ pub enum ZkSparqlError {
     InvalidZkSparqlQuery,
     SparqlEvaluationError(EvaluationError),
     ExtendedQueryFailed,
-    FailedPseudonymizingSolution,
+    IriParseError(IriParseError),
     FailedPseudonymizingQuad,
     FailedBuildingDisclosedSubject,
-    FailedBuildingDisclosedDataset,
+    StorageError(StorageError),
     FailedBuildingCredentialMetadata,
     BlankNodeMustBeSkolemized(BlankNode),
     InvalidProofValues,
+    FailedGettingVerifiableCredential,
+    InternalError(String),
 }
 
 impl From<EvaluationError> for ZkSparqlError {
-    fn from(value: EvaluationError) -> Self {
-        Self::SparqlEvaluationError(value)
+    fn from(e: EvaluationError) -> Self {
+        Self::SparqlEvaluationError(e)
     }
 }
 
 impl From<IriParseError> for ZkSparqlError {
-    fn from(_: IriParseError) -> Self {
-        Self::FailedPseudonymizingSolution
+    fn from(e: IriParseError) -> Self {
+        Self::IriParseError(e)
     }
 }
 
 impl From<StorageError> for ZkSparqlError {
-    fn from(_: StorageError) -> Self {
-        Self::FailedBuildingDisclosedDataset
+    fn from(e: StorageError) -> Self {
+        Self::StorageError(e)
     }
 }
 
@@ -56,15 +58,15 @@ impl From<ZkSparqlError> for HttpError {
                 bad_request(format!("sparql evaluation failed: {}", e))
             }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
-            ZkSparqlError::FailedPseudonymizingSolution => {
-                bad_request("pseudonymizing solution failed")
+            ZkSparqlError::IriParseError(e) => {
+                bad_request(format!("pseudonymizing solution failed: {}", e))
             }
             ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
             ZkSparqlError::FailedBuildingDisclosedSubject => {
                 bad_request("building disclosed subject failed")
             }
-            ZkSparqlError::FailedBuildingDisclosedDataset => {
-                bad_request("building disclosed dataset failed")
+            ZkSparqlError::StorageError(e) => {
+                bad_request(format!("building disclosed dataset failed: {}", e))
             }
             ZkSparqlError::FailedBuildingCredentialMetadata => {
                 bad_request("building credential metadata failed")
@@ -76,6 +78,10 @@ impl From<ZkSparqlError> for HttpError {
             ZkSparqlError::InvalidProofValues => {
                 bad_request("one proof must contain only one proof value")
             }
+            ZkSparqlError::FailedGettingVerifiableCredential => {
+                bad_request("failed to get a verifable credential")
+            }
+            ZkSparqlError::InternalError(msg) => bad_request(format!("internal error: {}", msg)),
         }
     }
 }

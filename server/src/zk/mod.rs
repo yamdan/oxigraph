@@ -8,7 +8,7 @@ use crate::{
     zk::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            build_metadata, build_proofs, get_proof_values,
+            get_proof_values, get_verifiable_credential, pseudonymize_metadata_and_proofs,
         },
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
@@ -20,7 +20,7 @@ use crate::{
 use oxhttp::model::{Request, Response};
 use oxigraph::{sparql::QueryResults, store::Store};
 use sparesults::QueryResultsSerializer;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
@@ -35,6 +35,9 @@ const PSEUDONYM_ALPHABETS: [char; 62] = [
     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
     'V', 'W', 'X', 'Y', 'Z',
 ];
+const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+const VERIFIABLE_CREDENTIAL: &str = "https://www.w3.org/2018/credentials#VerifiableCredential";
+const PROOF_VALUE: &str = "https://w3id.org/security#proofValue";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -140,15 +143,48 @@ fn evaluate_zksparql_prove(
     let mut disclosed_subjects =
         build_disclosed_subjects(&pseudonymized_solutions, &extended_triple_patterns)?;
 
-    // 6. build disclosed dataset and proofs
+    // 6. get associated VCs
     let cred_graph_ids: HashSet<_> = disclosed_subjects
         .iter()
         .map(|quad| quad.graph_name.clone())
         .collect();
+    let vcs: HashMap<_, _> = cred_graph_ids
+        .iter()
+        .map(|cred_graph_id| {
+            Ok((
+                cred_graph_id.clone(),
+                get_verifiable_credential(cred_graph_id, store)?,
+            ))
+        })
+        .collect::<Result<_, ZkSparqlError>>()?;
 
-    let mut disclosed_dataset = build_metadata(&cred_graph_ids, store, &mut nymizer)?;
-    let proofs = build_proofs(&cred_graph_ids, store, &mut nymizer)?;
-    let proof_values = get_proof_values(&cred_graph_ids, store)?;
+    // 7. pseudonymize VCs
+    let pseudonymized_vcs: HashMap<_, _> = vcs
+        .iter()
+        .map(|(cred_graph_id, vc)| {
+            Ok((
+                cred_graph_id.clone(),
+                pseudonymize_metadata_and_proofs(cred_graph_id, vc, store, &mut nymizer)?,
+            ))
+        })
+        .collect::<Result<_, ZkSparqlError>>()?;
+    println!("pseudonymized_vcs:\n{:#?}\n", pseudonymized_vcs);
+
+    // 8. build disclosed dataset and proofs
+    let mut disclosed_dataset: Vec<_> = pseudonymized_vcs
+        .values()
+        .map(|pseudonymized_vc| {
+            let mut proof: Vec<_> = pseudonymized_vc
+                .proof
+                .clone()
+                .into_iter()
+                .filter(|quad| quad.predicate != PROOF_VALUE)
+                .collect();
+            proof.extend(pseudonymized_vc.metadata.clone());
+            Ok(proof)
+        })
+        .collect::<Result<Vec<_>, ZkSparqlError>>()
+        .map(|v| v.into_iter().flatten().collect())?;
     disclosed_dataset.append(&mut disclosed_subjects);
     println!(
         "disclosed dataset:\n{}\n",
@@ -158,20 +194,15 @@ fn evaluate_zksparql_prove(
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );
-    println!(
-        "proofs:\n{}\n",
-        proofs
-            .iter()
-            .map(std::string::ToString::to_string)
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
+    let proof_values = get_proof_values(&cred_graph_ids, store)?;
     println!("proof values:\n{:#?}\n", proof_values);
 
+    // 9. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    // 7. build VP
+    // 10. build VP
+    // let vp = build_vp(disclosed_dataset, proofs);
 
     // x. return query results
     todo!()

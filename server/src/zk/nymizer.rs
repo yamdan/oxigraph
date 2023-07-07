@@ -77,7 +77,11 @@ impl Pseudonymizer {
                                             [0..(n.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
                                     )?)
                                 }
-                                _ => return Err(ZkSparqlError::FailedPseudonymizingSolution),
+                                _ => {
+                                    return Err(ZkSparqlError::InternalError(
+                                        "stored VC graph name must be IRI".to_owned(),
+                                    ))
+                                }
                             }
                         } else if disclosed_variables.contains(var) {
                             term.clone()
@@ -89,7 +93,9 @@ impl Pseudonymizer {
                                     return Err(ZkSparqlError::BlankNodeMustBeSkolemized(n.clone()))
                                 }
                                 Term::Triple(_) => {
-                                    return Err(ZkSparqlError::FailedPseudonymizingSolution)
+                                    return Err(ZkSparqlError::InternalError(
+                                        "stored VC must not contain a quoted triple".to_owned(),
+                                    ))
                                 }
                             }
                         };
