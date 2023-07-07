@@ -9,7 +9,7 @@ use crate::{
     zk::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            build_vp_metadata, get_proof_values, get_verifiable_credential,
+            build_vp_metadata, deskolemize, get_proof_values, get_verifiable_credential,
             pseudonymize_metadata_and_proofs,
         },
         context::PROOF_VALUE,
@@ -188,14 +188,6 @@ fn evaluate_zksparql_prove(
         .collect::<Result<Vec<_>, ZkSparqlError>>()
         .map(|v| v.into_iter().flatten().collect())?;
     disclosed_dataset.append(&mut disclosed_subjects);
-    println!(
-        "disclosed dataset:\n{}\n",
-        disclosed_dataset
-            .iter()
-            .map(std::string::ToString::to_string)
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
 
     // 9. get proof values
     let proof_values = get_proof_values(&cred_graph_ids, store)?;
@@ -207,11 +199,25 @@ fn evaluate_zksparql_prove(
 
     // 11. build VP
     let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let vp_metadata = build_vp_metadata(&cred_graph_ids, &verification_method)?;
+    let mut vp_metadata = build_vp_metadata(&cred_graph_ids, &verification_method)?;
+    disclosed_dataset.append(&mut vp_metadata);
     println!(
-        "vp metadata:\n{}\n",
-        vp_metadata
+        "disclosed dataset:\n{}\n",
+        disclosed_dataset
             .iter()
+            .map(std::string::ToString::to_string)
+            .reduce(|l, r| format!("{}\n{}", l, r))
+            .unwrap_or(String::new())
+    );
+
+    // 12. deskolemize VP
+    let vp: Vec<_> = disclosed_dataset
+        .into_iter()
+        .map(|quad| deskolemize(&quad))
+        .collect::<Result<_, _>>()?;
+    println!(
+        "vp:\n{}\n",
+        vp.iter()
             .map(std::string::ToString::to_string)
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())

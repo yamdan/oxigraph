@@ -2,7 +2,7 @@ use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
-use oxrdf::BlankNode;
+use oxrdf::{BlankNode, NamedNode};
 use spargebra::ParseError;
 
 pub enum ZkSparqlError {
@@ -20,6 +20,7 @@ pub enum ZkSparqlError {
     BlankNodeMustBeSkolemized(BlankNode),
     InvalidProofValues,
     FailedGettingVerifiableCredential,
+    InvalidSkolemIRI(NamedNode),
     InternalError(String),
 }
 
@@ -58,9 +59,7 @@ impl From<ZkSparqlError> for HttpError {
                 bad_request(format!("sparql evaluation failed: {}", e))
             }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
-            ZkSparqlError::IriParseError(e) => {
-                bad_request(format!("IRI parse error: {}", e))
-            }
+            ZkSparqlError::IriParseError(e) => bad_request(format!("IRI parse error: {}", e)),
             ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
             ZkSparqlError::FailedBuildingDisclosedSubject => {
                 bad_request("building disclosed subject failed")
@@ -80,6 +79,9 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::FailedGettingVerifiableCredential => {
                 bad_request("failed to get a verifable credential")
+            }
+            ZkSparqlError::InvalidSkolemIRI(n) => {
+                bad_request(format!("invalid skolem IRI: {}", n.as_str()))
             }
             ZkSparqlError::InternalError(msg) => bad_request(format!("internal error: {}", msg)),
         }

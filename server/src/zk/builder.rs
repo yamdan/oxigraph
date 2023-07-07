@@ -7,13 +7,15 @@ use super::{
     error::ZkSparqlError,
     nymizer::Pseudonymizer,
     parser::{ZkQuery, ZkQueryValues},
-    CRYPTOSUITE_FOR_VP, PROOF_GRAPH_SUFFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
+    CRYPTOSUITE_FOR_VP, PROOF_GRAPH_SUFFIX, SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX,
+    VC_VARIABLE_PREFIX,
 };
 
 use chrono::offset::Utc;
 use oxigraph::store::Store;
 use oxrdf::{
-    vocab::xsd, GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, TermRef, Variable,
+    vocab::xsd, BlankNode, GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term,
+    TermRef, Variable,
 };
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
@@ -517,13 +519,44 @@ pub fn build_vp_metadata(
             vp_proof_graph_id.clone(),
         ),
         Quad::new(
-            vp_proof_id.clone(),
+            vp_proof_id,
             NamedNode::new(CREATED)?,
             Literal::new_typed_literal(format!("{:?}", Utc::now()), xsd::DATE_TIME),
-            vp_proof_graph_id.clone(),
+            vp_proof_graph_id,
         ),
     ];
     vp.extend(vcs);
     vp.extend(vp_proof);
     Ok(vp)
+}
+
+pub fn deskolemize(quad: &Quad) -> Result<Quad, ZkSparqlError> {
+    let s = match &quad.subject {
+        Subject::NamedNode(n) if is_skolem_iri(n) => Subject::BlankNode(deskolemize_iri(n)?),
+        _ => quad.subject.clone(),
+    };
+    let p = quad.predicate.clone();
+    let o = match &quad.object {
+        Term::NamedNode(n) if is_skolem_iri(n) => Term::BlankNode(deskolemize_iri(n)?),
+        _ => quad.object.clone(),
+    };
+    let g = match &quad.graph_name {
+        GraphName::NamedNode(n) if is_skolem_iri(n) => GraphName::BlankNode(deskolemize_iri(n)?),
+        _ => quad.graph_name.clone(),
+    };
+    Ok(Quad::new(s, p, o, g))
+}
+
+pub fn is_skolem_iri(iri: &NamedNode) -> bool {
+    iri.as_str().starts_with(SKOLEM_IRI_PREFIX)
+}
+
+pub fn deskolemize_iri(iri: &NamedNode) -> Result<BlankNode, ZkSparqlError> {
+    let iri_str = iri.as_str();
+    if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
+        BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
+            .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))
+    } else {
+        Err(ZkSparqlError::InvalidSkolemIRI(iri.clone()))
+    }
 }
