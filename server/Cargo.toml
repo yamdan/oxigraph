@@ -16,10 +16,10 @@ rust-version = "1.65"
 anyhow = "1"
 oxhttp = { version = "0.1", features = ["rayon"] }
 clap = { version = "4.0", features = ["derive"] }
-oxigraph = { version = "0.4.0-alpha.1-dev", path = "../lib", features = ["http_client"] }
-oxrdf = { version = "0.2.0-alpha.1-dev", path = "../lib/oxrdf" }
-sparesults = { version = "0.2.0-alpha.1-dev", path = "../lib/sparesults", features = ["rdf-star"] }
-spargebra = { version = "0.3.0-alpha.1-dev", path = "../lib/spargebra" }
+oxigraph = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.4.0-alpha.1-dev", features = ["http_client"] }
+oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.2.0-alpha.1-dev" }
+sparesults = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.2.0-alpha.1-dev", features = ["rdf-star"] }
+spargebra = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.3.0-alpha.1-dev" }
 rand = "0.8"
 url = "2"
 oxiri = "0.2"
