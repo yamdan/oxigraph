@@ -95,12 +95,12 @@ fn evaluate_zksparql_fetch(
 ) -> Result<QueryResults, ZkSparqlError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
-    println!("parsed_zk_query: {:#?}", parsed_zk_query);
+    println!("parsed_zk_query:\n{:#?}\n", parsed_zk_query);
 
     // 2. build an extended SELECT query to identify credentials to be disclosed
     let extended_query = build_extended_fetch_query(&parsed_zk_query)?;
-    println!("extended fetch query: {:#?}", extended_query);
-    println!("extended fetch query (SPARQL): {}", extended_query);
+    println!("extended fetch query:\n{:#?}\n", extended_query);
+    println!("extended fetch query (SPARQL):\n{}\n", extended_query);
 
     // 3. execute the extended SELECT query to get extended fetch solutions
     store
@@ -116,12 +116,12 @@ fn evaluate_zksparql_prove(
 ) -> Result<Response, ZkSparqlError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
-    println!("parsed_zk_query: {:#?}", parsed_zk_query);
+    println!("parsed_zk_query:\n{:#?}\n", parsed_zk_query);
 
     // 2. build an extended prove query to construct disclosed quads from credentials
     let (extended_query, extended_triple_patterns) = build_extended_prove_query(&parsed_zk_query)?;
-    println!("extended prove query: {:#?}", extended_query);
-    println!("extended prove query (SPARQL): {}", extended_query);
+    println!("extended prove query:\n{:#?}\n", extended_query);
+    println!("extended prove query (SPARQL):\n{}\n", extended_query);
 
     // 3. execute the extended prove query to get extended prove solutions
     let extended_results = store.query(extended_query)?;
@@ -134,7 +134,7 @@ fn evaluate_zksparql_prove(
     let mut nymizer = Pseudonymizer::default();
     let pseudonymized_solutions =
         nymizer.pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
-    println!("pseudonymous solutions: {:#?}", pseudonymized_solutions);
+    println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
     // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
     let mut disclosed_subjects =
@@ -151,7 +151,7 @@ fn evaluate_zksparql_prove(
     let proof_values = get_proof_values(&cred_graph_ids, store)?;
     disclosed_dataset.append(&mut disclosed_subjects);
     println!(
-        "disclosed dataset: {}",
+        "disclosed dataset:\n{}\n",
         disclosed_dataset
             .iter()
             .map(std::string::ToString::to_string)
@@ -159,17 +159,19 @@ fn evaluate_zksparql_prove(
             .unwrap_or(String::new())
     );
     println!(
-        "proofs: {}",
+        "proofs:\n{}\n",
         proofs
             .iter()
             .map(std::string::ToString::to_string)
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );
-    println!("proof values: {:#?}", proof_values);
+    println!("proof values:\n{:#?}\n", proof_values);
 
     let deanon_map = nymizer.get_deanon_map();
-    println!("deanon map: {:#?}", deanon_map);
+    println!("deanon map:\n{:#?}\n", deanon_map);
+
+    // 7. build VP
 
     // x. return query results
     todo!()
