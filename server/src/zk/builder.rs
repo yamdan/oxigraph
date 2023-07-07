@@ -1,13 +1,20 @@
 use super::{
+    context::{
+        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF, PROOF_PURPOSE,
+        PROOF_VALUE, RDF_TYPE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+    },
     error::ZkSparqlError,
     nymizer::Pseudonymizer,
     parser::{ZkQuery, ZkQueryValues},
-    PROOF_GRAPH_SUFFIX, PROOF_VALUE, RDF_TYPE, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
-    VERIFIABLE_CREDENTIAL,
+    CRYPTOSUITE_FOR_VP, PROOF_GRAPH_SUFFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
+use chrono::offset::Utc;
 use oxigraph::store::Store;
-use oxrdf::{GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, TermRef, Variable};
+use oxrdf::{
+    vocab::xsd, GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, TermRef, Variable,
+};
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
     term::{NamedNodePattern, TermPattern, TriplePattern},
@@ -368,7 +375,7 @@ pub fn pseudonymize_metadata_and_proofs(
     let metadata_nym_targets = get_nym_targets(
         Some(NamedNodeRef::new(RDF_TYPE)?),
         Some(TermRef::from(NamedNodeRef::new_unchecked(
-            VERIFIABLE_CREDENTIAL,
+            VERIFIABLE_CREDENTIAL_TYPE,
         ))),
     )?;
     let proof_nym_targets = get_nym_targets(
@@ -443,4 +450,80 @@ fn gen_proof_graph_ids(
             _ => Err(ZkSparqlError::FailedGettingVerifiableCredential),
         })
         .collect::<Result<_, _>>()
+}
+
+pub fn build_vp_metadata(
+    cred_graph_ids: &HashSet<GraphName>,
+    verification_method: &NamedNode,
+) -> Result<Vec<Quad>, ZkSparqlError> {
+    let vp_id = Pseudonymizer::generate_pseudonymous_iri();
+    let vp_proof_id = Pseudonymizer::generate_pseudonymous_iri();
+    let vp_proof_graph_id = Pseudonymizer::generate_pseudonymous_iri();
+    let mut vp = vec![
+        Quad::new(
+            vp_id.clone(),
+            NamedNode::new(RDF_TYPE)?,
+            NamedNode::new(VERIFIABLE_PRESENTATION_TYPE)?,
+            GraphName::DefaultGraph,
+        ),
+        Quad::new(
+            vp_id.clone(),
+            NamedNode::new(PROOF)?,
+            vp_proof_graph_id.clone(),
+            GraphName::DefaultGraph,
+        ),
+    ];
+    let vcs: Vec<_> = cred_graph_ids
+        .iter()
+        .map(|cred_graph_id| {
+            let cred_graph_id = match cred_graph_id {
+                GraphName::NamedNode(n) => Ok(Term::NamedNode(n.clone())),
+                GraphName::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n.clone())),
+                GraphName::DefaultGraph => Err(ZkSparqlError::InternalError(
+                    "stored VC must not in the default graph".to_owned(),
+                )),
+            }?;
+            Ok(Quad::new(
+                vp_id.clone(),
+                NamedNode::new(VERIFIABLE_CREDENTIAL)?,
+                cred_graph_id,
+                GraphName::DefaultGraph,
+            ))
+        })
+        .collect::<Result<_, ZkSparqlError>>()?;
+    let vp_proof = vec![
+        Quad::new(
+            vp_proof_id.clone(),
+            NamedNode::new(RDF_TYPE)?,
+            NamedNode::new(DATA_INTEGRITY_PROOF)?,
+            vp_proof_graph_id.clone(),
+        ),
+        Quad::new(
+            vp_proof_id.clone(),
+            NamedNode::new(CRYPTOSUITE)?,
+            Literal::new_simple_literal(CRYPTOSUITE_FOR_VP),
+            vp_proof_graph_id.clone(),
+        ),
+        Quad::new(
+            vp_proof_id.clone(),
+            NamedNode::new(PROOF_PURPOSE)?,
+            NamedNode::new(ASSERTION_METHOD)?,
+            vp_proof_graph_id.clone(),
+        ),
+        Quad::new(
+            vp_proof_id.clone(),
+            NamedNode::new(VERIFICATION_METHOD)?,
+            verification_method.clone(),
+            vp_proof_graph_id.clone(),
+        ),
+        Quad::new(
+            vp_proof_id.clone(),
+            NamedNode::new(CREATED)?,
+            Literal::new_typed_literal(format!("{:?}", Utc::now()), xsd::DATE_TIME),
+            vp_proof_graph_id.clone(),
+        ),
+    ];
+    vp.extend(vcs);
+    vp.extend(vp_proof);
+    Ok(vp)
 }

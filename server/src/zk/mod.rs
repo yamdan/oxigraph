@@ -1,4 +1,5 @@
 mod builder;
+mod context;
 mod error;
 mod nymizer;
 mod parser;
@@ -8,8 +9,10 @@ use crate::{
     zk::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            get_proof_values, get_verifiable_credential, pseudonymize_metadata_and_proofs,
+            build_vp_metadata, get_proof_values, get_verifiable_credential,
+            pseudonymize_metadata_and_proofs,
         },
+        context::PROOF_VALUE,
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
@@ -19,6 +22,7 @@ use crate::{
 
 use oxhttp::model::{Request, Response};
 use oxigraph::{sparql::QueryResults, store::Store};
+use oxrdf::NamedNode;
 use sparesults::QueryResultsSerializer;
 use std::collections::{HashMap, HashSet};
 use url::form_urlencoded;
@@ -35,9 +39,7 @@ const PSEUDONYM_ALPHABETS: [char; 62] = [
     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
     'V', 'W', 'X', 'Y', 'Z',
 ];
-const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-const VERIFIABLE_CREDENTIAL: &str = "https://www.w3.org/2018/credentials#VerifiableCredential";
-const PROOF_VALUE: &str = "https://w3id.org/security#proofValue";
+const CRYPTOSUITE_FOR_VP: &str = "bbsterm-2023";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -194,15 +196,26 @@ fn evaluate_zksparql_prove(
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );
+
+    // 9. get proof values
     let proof_values = get_proof_values(&cred_graph_ids, store)?;
     println!("proof values:\n{:#?}\n", proof_values);
 
-    // 9. get deanonymization map
+    // 10. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
     println!("deanon map:\n{:#?}\n", deanon_map);
 
-    // 10. build VP
-    // let vp = build_vp(disclosed_dataset, proofs);
+    // 11. build VP
+    let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
+    let vp_metadata = build_vp_metadata(&cred_graph_ids, &verification_method)?;
+    println!(
+        "vp metadata:\n{}\n",
+        vp_metadata
+            .iter()
+            .map(std::string::ToString::to_string)
+            .reduce(|l, r| format!("{}\n{}", l, r))
+            .unwrap_or(String::new())
+    );
 
     // x. return query results
     todo!()

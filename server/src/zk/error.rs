@@ -59,7 +59,7 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
             ZkSparqlError::IriParseError(e) => {
-                bad_request(format!("pseudonymizing solution failed: {}", e))
+                bad_request(format!("IRI parse error: {}", e))
             }
             ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
             ZkSparqlError::FailedBuildingDisclosedSubject => {

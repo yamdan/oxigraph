@@ -15,14 +15,18 @@ pub struct Pseudonymizer {
 }
 
 impl Pseudonymizer {
-    fn generate_pseudonymous_iri() -> NamedNode {
+    pub fn generate_pseudonymous_iri() -> NamedNode {
         let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
     }
 
-    fn generate_pseudonymous_var() -> NamedNode {
+    pub fn generate_pseudonymous_var() -> NamedNode {
         let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
+    }
+
+    fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
+        self.iri_to_nym.get(iri).cloned()
     }
 
     fn issue_iri_nym(&mut self, iri: &NamedNode) -> NamedNode {
@@ -32,10 +36,6 @@ impl Pseudonymizer {
             let nym = Self::generate_pseudonymous_iri();
             self.iri_to_nym.entry(iri.clone()).or_insert(nym).clone()
         }
-    }
-
-    fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
-        self.iri_to_nym.get(iri).cloned()
     }
 
     fn issue_literal_nym(&mut self, literal: &Literal) -> NamedNode {
