@@ -1,9 +1,8 @@
 use super::error::ZkSparqlError;
 
-use oxiri::Iri;
 use oxrdf::Variable;
 use spargebra::{
-    algebra::{Expression, GraphPattern, QueryDataset},
+    algebra::{Expression, GraphPattern},
     term::{GroundTerm, TriplePattern},
 };
 use std::collections::HashSet;
@@ -41,26 +40,12 @@ pub fn parse_zk_query(query: &str, base_iri: Option<&str>) -> Result<ZkQuery, Zk
     match parsed_query {
         spargebra::Query::Construct { .. } => Err(ZkSparqlError::ConstructNotSupported),
         spargebra::Query::Describe { .. } => Err(ZkSparqlError::DescribeNotSupported),
-        spargebra::Query::Select {
-            dataset,
-            pattern,
-            base_iri,
-        } => parse_zk_select(dataset, pattern, base_iri),
-        spargebra::Query::Ask {
-            dataset,
-            pattern,
-            base_iri,
-        } => parse_zk_ask(dataset, pattern, base_iri),
+        spargebra::Query::Select { pattern, .. } => parse_zk_select(pattern), // TODO: return 400 if dataset or base_iri is specified?
+        spargebra::Query::Ask { pattern, .. } => parse_zk_ask(pattern), // TODO: return 400 if dataset or base_iri is specified?
     }
 }
 
-fn parse_zk_select(
-    _dataset: Option<QueryDataset>,
-    pattern: GraphPattern,
-    _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, ZkSparqlError> {
-    println!("original pattern: {:#?}", pattern);
-
+fn parse_zk_select(pattern: GraphPattern) -> Result<ZkQuery, ZkSparqlError> {
     match pattern {
         GraphPattern::Slice {
             inner,
@@ -77,13 +62,7 @@ fn parse_zk_select(
     }
 }
 
-fn parse_zk_ask(
-    _dataset: Option<QueryDataset>,
-    pattern: GraphPattern,
-    _base_iri: Option<Iri<String>>,
-) -> Result<ZkQuery, ZkSparqlError> {
-    println!("original pattern: {:#?}", pattern);
-
+fn parse_zk_ask(pattern: GraphPattern) -> Result<ZkQuery, ZkSparqlError> {
     match pattern {
         GraphPattern::Slice {
             inner,
