@@ -22,7 +22,8 @@ use crate::{
 
 use oxhttp::model::{Request, Response};
 use oxigraph::{sparql::QueryResults, store::Store};
-use oxrdf::NamedNode;
+use oxrdf::{Dataset, NamedNode};
+use rdf_canon::{issue, relabel};
 use sparesults::QueryResultsSerializer;
 use std::collections::{HashMap, HashSet};
 use url::form_urlencoded;
@@ -219,6 +220,20 @@ fn evaluate_zksparql_prove(
         "vp:\n{}\n",
         vp.iter()
             .map(std::string::ToString::to_string)
+            .reduce(|l, r| format!("{}\n{}", l, r))
+            .unwrap_or(String::new())
+    );
+
+    // 13. canonicalize VP
+    let vp_dataset = Dataset::from_iter(vp);
+    let issued_identifiers_map = issue(&vp_dataset)?;
+    let canonicalized_dataset = relabel(&vp_dataset, &issued_identifiers_map)?;
+    println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
+    println!(
+        "canonicalized dataset:\n{}\n",
+        canonicalized_dataset
+            .iter()
+            .map(|q| q.to_string())
             .reduce(|l, r| format!("{}\n{}", l, r))
             .unwrap_or(String::new())
     );

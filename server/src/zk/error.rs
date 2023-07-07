@@ -3,6 +3,7 @@ use crate::{bad_request, HttpError};
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
 use oxrdf::{BlankNode, NamedNode};
+use rdf_canon::CanonicalizationError;
 use spargebra::ParseError;
 
 pub enum ZkSparqlError {
@@ -21,6 +22,7 @@ pub enum ZkSparqlError {
     InvalidProofValues,
     FailedGettingVerifiableCredential,
     InvalidSkolemIRI(NamedNode),
+    CanonicalizationError(CanonicalizationError),
     InternalError(String),
 }
 
@@ -39,6 +41,12 @@ impl From<IriParseError> for ZkSparqlError {
 impl From<StorageError> for ZkSparqlError {
     fn from(e: StorageError) -> Self {
         Self::StorageError(e)
+    }
+}
+
+impl From<CanonicalizationError> for ZkSparqlError {
+    fn from(e: CanonicalizationError) -> Self {
+        Self::CanonicalizationError(e)
     }
 }
 
@@ -82,6 +90,9 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::InvalidSkolemIRI(n) => {
                 bad_request(format!("invalid skolem IRI: {}", n.as_str()))
+            }
+            ZkSparqlError::CanonicalizationError(e) => {
+                bad_request(format!("canonicalization error: {}", e))
             }
             ZkSparqlError::InternalError(msg) => bad_request(format!("internal error: {}", msg)),
         }
