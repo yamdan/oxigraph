@@ -3,29 +3,28 @@ mod context;
 mod error;
 mod nymizer;
 mod parser;
+mod sig;
 
 use crate::{
     bad_request, base_url, query_results_content_negotiation,
     zk::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            build_vp_metadata, deskolemize, get_proof_values, get_verifiable_credential,
+            deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,
             pseudonymize_metadata_and_proofs,
         },
-        context::PROOF_VALUE,
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
+        sig::derive_proof,
     },
     HttpError, ReadForWrite,
 };
 
 use oxhttp::model::{Request, Response};
 use oxigraph::{sparql::QueryResults, store::Store};
-use oxrdf::{Dataset, NamedNode};
-use rdf_canon::{issue, relabel};
 use sparesults::QueryResultsSerializer;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
@@ -33,7 +32,7 @@ const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const PROOF_GRAPH_SUFFIX: &str = ".proof";
 const VC_VARIABLE_PREFIX: &str = "__vc";
 const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
-const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
+// const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
 const PSEUDONYM_ALPHABETS: [char; 62] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
     'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
@@ -143,16 +142,13 @@ fn evaluate_zksparql_prove(
     println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
     // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
-    let mut disclosed_subjects =
+    let disclosed_subjects =
         build_disclosed_subjects(&pseudonymized_solutions, &extended_triple_patterns)?;
+    println!("disclosed subjects:\n{:#?}\n", disclosed_subjects);
 
     // 6. get associated VCs
-    let cred_graph_ids: HashSet<_> = disclosed_subjects
-        .iter()
-        .map(|quad| quad.graph_name.clone())
-        .collect();
-    let vcs: HashMap<_, _> = cred_graph_ids
-        .iter()
+    let vcs: HashMap<_, _> = disclosed_subjects
+        .keys()
         .map(|cred_graph_id| {
             Ok((
                 cred_graph_id.clone(),
@@ -162,7 +158,7 @@ fn evaluate_zksparql_prove(
         .collect::<Result<_, ZkSparqlError>>()?;
 
     // 7. pseudonymize VCs
-    let pseudonymized_vcs: HashMap<_, _> = vcs
+    let mut pseudonymized_vcs: HashMap<_, _> = vcs
         .iter()
         .map(|(cred_graph_id, vc)| {
             Ok((
@@ -171,72 +167,26 @@ fn evaluate_zksparql_prove(
             ))
         })
         .collect::<Result<_, ZkSparqlError>>()?;
-    println!("pseudonymized_vcs:\n{:#?}\n", pseudonymized_vcs);
 
-    // 8. build disclosed dataset and proofs
-    let mut disclosed_dataset: Vec<_> = pseudonymized_vcs
-        .values()
-        .map(|pseudonymized_vc| {
-            let mut proof: Vec<_> = pseudonymized_vc
-                .proof
-                .clone()
-                .into_iter()
-                .filter(|quad| quad.predicate != PROOF_VALUE)
-                .collect();
-            proof.extend(pseudonymized_vc.metadata.clone());
-            Ok(proof)
-        })
-        .collect::<Result<Vec<_>, ZkSparqlError>>()
-        .map(|v| v.into_iter().flatten().collect())?;
-    disclosed_dataset.append(&mut disclosed_subjects);
+    // 8. put disclosed subjects into pseudonymized VCs
+    for (graph_name, quads) in disclosed_subjects {
+        pseudonymized_vcs
+            .entry(graph_name)
+            .and_modify(|vc| vc.subject = quads);
+    }
 
-    // 9. get proof values
-    let proof_values = get_proof_values(&cred_graph_ids, store)?;
-    println!("proof values:\n{:#?}\n", proof_values);
-
-    // 10. get deanonymization map
+    // 9. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
-    println!("deanon map:\n{:#?}\n", deanon_map);
+    let deskolemized_deanon_map = deskolemize_deanon_map(&deanon_map)?;
+
+    // 10. deskolemize VCs
+    let deskolemized_vcs: HashMap<_, _> = deskolemize_vc_map(&vcs)?;
+    let disclosed_vcs: HashMap<_, _> = deskolemize_vc_map(&pseudonymized_vcs)?;
+    println!("deskolemized_vcs:\n{:#?}\n", deskolemized_vcs);
+    println!("deskolemized deanon map:\n{:#?}\n", deskolemized_deanon_map);
 
     // 11. build VP
-    let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let mut vp_metadata = build_vp_metadata(&cred_graph_ids, &verification_method)?;
-    disclosed_dataset.append(&mut vp_metadata);
-    println!(
-        "disclosed dataset:\n{}\n",
-        disclosed_dataset
-            .iter()
-            .map(std::string::ToString::to_string)
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
-
-    // 12. deskolemize VP
-    let vp: Vec<_> = disclosed_dataset
-        .into_iter()
-        .map(|quad| deskolemize(&quad))
-        .collect::<Result<_, _>>()?;
-    println!(
-        "vp:\n{}\n",
-        vp.iter()
-            .map(std::string::ToString::to_string)
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
-
-    // 13. canonicalize VP
-    let vp_dataset = Dataset::from_iter(vp);
-    let issued_identifiers_map = issue(&vp_dataset)?;
-    let canonicalized_dataset = relabel(&vp_dataset, &issued_identifiers_map)?;
-    println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
-    println!(
-        "canonicalized dataset:\n{}\n",
-        canonicalized_dataset
-            .iter()
-            .map(|q| q.to_string())
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
+    let _vp = derive_proof(&deskolemized_vcs, &disclosed_vcs, &deanon_map);
 
     // x. return query results
     todo!()

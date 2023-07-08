@@ -1,21 +1,14 @@
 use super::{
-    context::{
-        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF, PROOF_PURPOSE,
-        PROOF_VALUE, RDF_TYPE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
-        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
-    },
+    context::{RDF_TYPE, VERIFIABLE_CREDENTIAL_TYPE},
     error::ZkSparqlError,
     nymizer::Pseudonymizer,
     parser::{ZkQuery, ZkQueryValues},
-    CRYPTOSUITE_FOR_VP, PROOF_GRAPH_SUFFIX, SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX,
-    VC_VARIABLE_PREFIX,
+    PROOF_GRAPH_SUFFIX, SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
-use chrono::offset::Utc;
 use oxigraph::store::Store;
 use oxrdf::{
-    vocab::xsd, BlankNode, GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term,
-    TermRef, Variable,
+    BlankNode, GraphName, Literal, NamedNode, NamedNodeRef, Quad, Subject, Term, TermRef, Variable,
 };
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
@@ -40,6 +33,16 @@ pub struct VerifiableCredential {
     pub metadata: Vec<Quad>,
     pub subject: Vec<Quad>,
     pub proof: Vec<Quad>,
+}
+
+impl From<&VerifiableCredential> for Vec<Quad> {
+    fn from(value: &VerifiableCredential) -> Self {
+        let mut out = Vec::new();
+        out.extend(value.metadata.clone());
+        out.extend(value.subject.clone());
+        out.extend(value.proof.clone());
+        out
+    }
 }
 
 pub fn build_extended_fetch_query(query: &ZkQuery) -> Result<spargebra::Query, ZkSparqlError> {
@@ -245,7 +248,9 @@ fn build_extended_query(
 pub fn build_disclosed_subjects(
     solutions: &[HashMap<Variable, Term>],
     extended_triple_patterns: &[TriplePatternWithGraphVar],
-) -> Result<Vec<Quad>, ZkSparqlError> {
+) -> Result<HashMap<GraphName, Vec<Quad>>, ZkSparqlError> {
+    let mut res: HashMap<_, Vec<_>> = HashMap::new();
+
     let disclosed_subjects = solutions
         .iter()
         .map(|solution| {
@@ -255,13 +260,16 @@ pub fn build_disclosed_subjects(
                 .collect::<Result<Vec<_>, ZkSparqlError>>()
         })
         .collect::<Result<Vec<_>, ZkSparqlError>>()?;
-    Ok(disclosed_subjects.into_iter().flatten().collect())
+    for (g, quad) in disclosed_subjects.into_iter().flatten() {
+        res.entry(g).or_insert_with(Vec::new).push(quad);
+    }
+    Ok(res)
 }
 
 fn build_disclosed_subject(
     solution: &HashMap<Variable, Term>,
     pattern_with_graph_var: &TriplePatternWithGraphVar,
-) -> Result<Quad, ZkSparqlError> {
+) -> Result<(GraphName, Quad), ZkSparqlError> {
     let TriplePatternWithGraphVar {
         triple_pattern,
         graph_var,
@@ -315,7 +323,7 @@ fn build_disclosed_subject(
         TermPattern::Triple(_) => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
     };
 
-    Ok(Quad::new(s, p, o, g))
+    Ok((g.clone(), Quad::new(s, p, o, g)))
 }
 
 pub fn get_verifiable_credential(
@@ -403,134 +411,80 @@ pub fn pseudonymize_metadata_and_proofs(
     })
 }
 
-pub fn get_proof_values(
-    cred_graph_ids: &HashSet<GraphName>,
-    store: &Store,
-) -> Result<HashMap<GraphName, String>, ZkSparqlError> {
-    let proof_graph_ids = gen_proof_graph_ids(cred_graph_ids)?;
-    proof_graph_ids
+pub fn deskolemize_deanon_map(
+    deanon_map: &HashMap<NamedNode, Term>,
+) -> Result<HashMap<BlankNode, Term>, ZkSparqlError> {
+    deanon_map
         .iter()
-        .map(|proof_graph_id| {
-            let proof_values: Vec<_> = store
-                .quads_for_pattern(
-                    None,
-                    Some(NamedNodeRef::new(PROOF_VALUE)?),
-                    None,
-                    Some(proof_graph_id.as_ref()),
-                )
-                .map(|quad| match quad {
-                    Ok(q) => Ok(q.object),
-                    Err(_) => Err(ZkSparqlError::InvalidProofValues),
-                })
-                .collect::<Result<_, _>>()?;
-            if proof_values.len() == 1 {
-                match proof_values
-                    .get(0)
-                    .ok_or(ZkSparqlError::InvalidProofValues)?
-                {
-                    Term::Literal(v) => Ok((proof_graph_id.clone(), v.value().to_owned())),
-                    _ => Err(ZkSparqlError::InvalidProofValues),
+        .map(|(iri, term)| {
+            let s_iri = deskolemize_iri(iri)?;
+            let s_term = match term {
+                Term::NamedNode(iri) if is_skolem_iri(iri) => {
+                    Term::BlankNode(deskolemize_iri(iri)?)
                 }
-            } else {
-                Err(ZkSparqlError::InvalidProofValues)
-            }
+                _ => term.clone(),
+            };
+            Ok((s_iri, s_term))
         })
         .collect()
 }
 
-fn gen_proof_graph_ids(
-    cred_graph_ids: &HashSet<GraphName>,
-) -> Result<HashSet<GraphName>, ZkSparqlError> {
-    cred_graph_ids
+pub fn deskolemize_vc_map(
+    vc_map: &HashMap<GraphName, VerifiableCredential>,
+) -> Result<HashMap<GraphName, VerifiableCredential>, ZkSparqlError> {
+    vc_map
         .iter()
-        .map(|cred_graph_id| match cred_graph_id {
-            GraphName::NamedNode(n) => Ok(GraphName::NamedNode(NamedNode::new(format!(
-                "{}{}",
-                n.as_str(),
-                PROOF_GRAPH_SUFFIX
-            ))?)),
-            _ => Err(ZkSparqlError::FailedGettingVerifiableCredential),
+        .map(|(g, vc)| {
+            let s_g = deskolemize_graph_name(g)?;
+            let s_vc = deskolemize_vc(vc)?;
+            Ok((s_g, s_vc))
         })
-        .collect::<Result<_, _>>()
+        .collect()
 }
 
-pub fn build_vp_metadata(
-    cred_graph_ids: &HashSet<GraphName>,
-    verification_method: &NamedNode,
-) -> Result<Vec<Quad>, ZkSparqlError> {
-    let vp_id = Pseudonymizer::generate_pseudonymous_iri();
-    let vp_proof_id = Pseudonymizer::generate_pseudonymous_iri();
-    let vp_proof_graph_id = Pseudonymizer::generate_pseudonymous_iri();
-    let mut vp = vec![
-        Quad::new(
-            vp_id.clone(),
-            NamedNode::new(RDF_TYPE)?,
-            NamedNode::new(VERIFIABLE_PRESENTATION_TYPE)?,
-            GraphName::DefaultGraph,
-        ),
-        Quad::new(
-            vp_id.clone(),
-            NamedNode::new(PROOF)?,
-            vp_proof_graph_id.clone(),
-            GraphName::DefaultGraph,
-        ),
-    ];
-    let vcs: Vec<_> = cred_graph_ids
+pub fn deskolemize_vc(vc: &VerifiableCredential) -> Result<VerifiableCredential, ZkSparqlError> {
+    let metadata: Vec<_> = vc
+        .metadata
         .iter()
-        .map(|cred_graph_id| {
-            let cred_graph_id = match cred_graph_id {
-                GraphName::NamedNode(n) => Ok(Term::NamedNode(n.clone())),
-                GraphName::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n.clone())),
-                GraphName::DefaultGraph => Err(ZkSparqlError::InternalError(
-                    "stored VC must not in the default graph".to_owned(),
-                )),
-            }?;
-            Ok(Quad::new(
-                vp_id.clone(),
-                NamedNode::new(VERIFIABLE_CREDENTIAL)?,
-                cred_graph_id,
-                GraphName::DefaultGraph,
-            ))
-        })
-        .collect::<Result<_, ZkSparqlError>>()?;
-    let vp_proof = vec![
-        Quad::new(
-            vp_proof_id.clone(),
-            NamedNode::new(RDF_TYPE)?,
-            NamedNode::new(DATA_INTEGRITY_PROOF)?,
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            NamedNode::new(CRYPTOSUITE)?,
-            Literal::new_simple_literal(CRYPTOSUITE_FOR_VP),
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            NamedNode::new(PROOF_PURPOSE)?,
-            NamedNode::new(ASSERTION_METHOD)?,
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            NamedNode::new(VERIFICATION_METHOD)?,
-            verification_method.clone(),
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id,
-            NamedNode::new(CREATED)?,
-            Literal::new_typed_literal(format!("{:?}", Utc::now()), xsd::DATE_TIME),
-            vp_proof_graph_id,
-        ),
-    ];
-    vp.extend(vcs);
-    vp.extend(vp_proof);
-    Ok(vp)
+        .map(deskolemize_quad)
+        .collect::<Result<_, _>>()?;
+    let subject: Vec<_> = vc
+        .subject
+        .iter()
+        .map(deskolemize_quad)
+        .collect::<Result<_, _>>()?;
+    let proof: Vec<_> = vc
+        .proof
+        .iter()
+        .map(deskolemize_quad)
+        .collect::<Result<_, _>>()?;
+    Ok(VerifiableCredential {
+        metadata,
+        subject,
+        proof,
+    })
 }
 
-pub fn deskolemize(quad: &Quad) -> Result<Quad, ZkSparqlError> {
+pub fn deskolemize_iri(iri: &NamedNode) -> Result<BlankNode, ZkSparqlError> {
+    let iri_str = iri.as_str();
+    if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
+        BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
+            .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))
+    } else {
+        Err(ZkSparqlError::InvalidSkolemIRI(iri.clone()))
+    }
+}
+
+pub fn deskolemize_graph_name(graph_name: &GraphName) -> Result<GraphName, ZkSparqlError> {
+    match graph_name {
+        GraphName::NamedNode(iri) if is_skolem_iri(iri) => {
+            Ok(GraphName::BlankNode(deskolemize_iri(iri)?))
+        }
+        _ => Ok(graph_name.clone()),
+    }
+}
+
+pub fn deskolemize_quad(quad: &Quad) -> Result<Quad, ZkSparqlError> {
     let s = match &quad.subject {
         Subject::NamedNode(n) if is_skolem_iri(n) => Subject::BlankNode(deskolemize_iri(n)?),
         _ => quad.subject.clone(),
@@ -549,14 +503,4 @@ pub fn deskolemize(quad: &Quad) -> Result<Quad, ZkSparqlError> {
 
 pub fn is_skolem_iri(iri: &NamedNode) -> bool {
     iri.as_str().starts_with(SKOLEM_IRI_PREFIX)
-}
-
-pub fn deskolemize_iri(iri: &NamedNode) -> Result<BlankNode, ZkSparqlError> {
-    let iri_str = iri.as_str();
-    if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
-        BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
-            .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))
-    } else {
-        Err(ZkSparqlError::InvalidSkolemIRI(iri.clone()))
-    }
 }

@@ -1,6 +1,6 @@
 use super::{
-    error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, PSEUDONYMOUS_VAR_PREFIX, PSEUDONYM_ALPHABETS,
-    SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
+    error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, PSEUDONYM_ALPHABETS, SKOLEM_IRI_PREFIX,
+    SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
 use nanoid::nanoid;
@@ -20,10 +20,10 @@ impl Pseudonymizer {
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
     }
 
-    pub fn generate_pseudonymous_var() -> NamedNode {
-        let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
-        NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
-    }
+    // pub fn generate_pseudonymous_var() -> NamedNode {
+    //     let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
+    //     NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
+    // }
 
     fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
         self.iri_to_nym.get(iri).cloned()
@@ -39,7 +39,8 @@ impl Pseudonymizer {
     }
 
     fn issue_literal_nym(&mut self, literal: &Literal) -> NamedNode {
-        let nym = Self::generate_pseudonymous_var();
+        // let nym = Self::generate_pseudonymous_var();
+        let nym = Self::generate_pseudonymous_iri();
         self.nym_to_literal
             .insert(nym.clone(), Term::Literal(literal.clone()));
         nym

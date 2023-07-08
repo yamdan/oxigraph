@@ -44,12 +44,6 @@ impl From<StorageError> for ZkSparqlError {
     }
 }
 
-impl From<CanonicalizationError> for ZkSparqlError {
-    fn from(e: CanonicalizationError) -> Self {
-        Self::CanonicalizationError(e)
-    }
-}
-
 impl From<ZkSparqlError> for HttpError {
     fn from(val: ZkSparqlError) -> Self {
         match val {
