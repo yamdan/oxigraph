@@ -14,6 +14,7 @@ use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationEr
 use std::collections::{HashMap, HashSet};
 
 // TODO: fix name
+#[derive(Debug)]
 pub enum DeriveProofError {
     CanonicalizationError(CanonicalizationError),
     InvalidVCPairs,

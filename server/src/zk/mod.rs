@@ -26,6 +26,7 @@ use oxigraph::{
     sparql::{QueryResults, QuerySolutionIter},
     store::Store,
 };
+use oxrdf::{Literal, Variable};
 use sparesults::QueryResultsSerializer;
 use std::{collections::HashMap, rc::Rc};
 use url::form_urlencoded;
@@ -43,6 +44,7 @@ const PSEUDONYM_ALPHABETS: [char; 62] = [
     'V', 'W', 'X', 'Y', 'Z',
 ];
 const CRYPTOSUITE_FOR_VP: &str = "bbsterm-2023";
+const VP_VARIABLE: &str = "__vp";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,
@@ -137,12 +139,12 @@ fn evaluate_zksparql_prove(
         _ => return Err(ZkSparqlError::ExtendedQueryFailed),
     };
 
-    let disclosed_variables = parsed_zk_query.disclosed_variables;
+    let mut disclosed_variables = parsed_zk_query.disclosed_variables;
     println!("disclosed variables:\n{:#?}\n", disclosed_variables);
 
     // 4. pseudonymize the extended prove solutions
     let mut nymizer = Pseudonymizer::default();
-    let pseudonymized_solutions =
+    let mut pseudonymized_solutions =
         nymizer.pseudonymize_solutions(extended_solutions, &disclosed_variables)?;
     println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
@@ -184,13 +186,28 @@ fn evaluate_zksparql_prove(
     let deanon_map = nymizer.get_deanon_map();
 
     // 10. build VP
-    let _vp = derive_proof(
+    let vp = derive_proof(
         &deskolemize_vc_map(&vcs)?,
         &deskolemize_vc_map(&disclosed_vcs)?,
         &deskolemize_deanon_map(&deanon_map)?,
-    );
+    )?;
 
-    // x. return query results
+    // 11. add VP to the solution
+    disclosed_variables.push(Variable::new(VP_VARIABLE)?);
+    for solution in &mut pseudonymized_solutions {
+        solution.insert(
+            Variable::new(VP_VARIABLE)?,
+            Literal::new_simple_literal(
+                vp.iter()
+                    .map(|quad| quad.to_string() + " .\n")
+                    .reduce(|l, r| format!("{}{}", l, r))
+                    .unwrap_or("".to_string()),
+            )
+            .into(),
+        );
+    }
+
+    // 12. return query results
     Ok(QueryResults::Solutions(QuerySolutionIter::new(
         Rc::new(disclosed_variables.clone()),
         Box::new(pseudonymized_solutions.into_iter().map(move |m| {

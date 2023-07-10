@@ -2,9 +2,11 @@ use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
-use oxrdf::{BlankNode, NamedNode};
+use oxrdf::{BlankNode, NamedNode, VariableNameParseError};
 use rdf_canon::CanonicalizationError;
 use spargebra::ParseError;
+
+use super::sig::DeriveProofError;
 
 pub enum ZkSparqlError {
     ConstructNotSupported,
@@ -23,6 +25,8 @@ pub enum ZkSparqlError {
     FailedGettingVerifiableCredential,
     InvalidSkolemIRI(NamedNode),
     CanonicalizationError(CanonicalizationError),
+    VariableNameParseError(VariableNameParseError),
+    DeriveProofError(DeriveProofError),
     InternalError(String),
 }
 
@@ -41,6 +45,18 @@ impl From<IriParseError> for ZkSparqlError {
 impl From<StorageError> for ZkSparqlError {
     fn from(e: StorageError) -> Self {
         Self::StorageError(e)
+    }
+}
+
+impl From<VariableNameParseError> for ZkSparqlError {
+    fn from(e: VariableNameParseError) -> Self {
+        Self::VariableNameParseError(e)
+    }
+}
+
+impl From<DeriveProofError> for ZkSparqlError {
+    fn from(e: DeriveProofError) -> Self {
+        Self::DeriveProofError(e)
     }
 }
 
@@ -87,6 +103,12 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::CanonicalizationError(e) => {
                 bad_request(format!("canonicalization error: {}", e))
+            }
+            ZkSparqlError::VariableNameParseError(e) => {
+                bad_request(format!("variable name parse error: {}", e))
+            }
+            ZkSparqlError::DeriveProofError(e) => {
+                bad_request(format!("derive proof failed: {:?}", e))
             }
             ZkSparqlError::InternalError(msg) => bad_request(format!("internal error: {}", msg)),
         }
