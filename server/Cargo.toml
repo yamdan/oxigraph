@@ -16,10 +16,10 @@ rust-version = "1.65"
 anyhow = "1"
 oxhttp = { version = "0.1", features = ["rayon"] }
 clap = { version = "4.0", features = ["derive"] }
-oxigraph = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.4.0-alpha.1-dev", features = ["http_client"] }
-oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.2.0-alpha.1-dev" }
-sparesults = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.2.0-alpha.1-dev", features = ["rdf-star"] }
-spargebra = { git = "https://github.com/oxigraph/oxigraph.git", branch = "next", version = "0.3.0-alpha.1-dev" }
+oxigraph = { git = "https://github.com/oxigraph/oxigraph.git", version = "0.4.0-alpha.1-dev", rev = "db7fab0", features = ["http_client"] }
+oxrdf = { git = "https://github.com/oxigraph/oxigraph.git", version = "0.2.0-alpha.1-dev", rev = "db7fab0" }
+sparesults = { git = "https://github.com/oxigraph/oxigraph.git", version = "0.2.0-alpha.1-dev", rev = "db7fab0", features = ["rdf-star"] }
+spargebra = { git = "https://github.com/oxigraph/oxigraph.git", version = "0.3.0-alpha.1-dev", rev = "db7fab0" }
 rand = "0.8"
 url = "2"
 oxiri = "0.2"
@@ -27,7 +27,7 @@ flate2 = "1"
 rayon-core = "1"
 nanoid = "0.4"
 chrono = "0.4"
-rdf-canon = { git = "https://github.com/yamdan/rdf-canon-rust.git", version = "0.9.1" }
+rdf-canon = { git = "https://github.com/yamdan/rdf-canon-rust.git", version = "0.10.1" }
 
 [dev-dependencies]
 assert_cmd = "2"

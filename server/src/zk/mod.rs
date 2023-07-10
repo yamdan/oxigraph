@@ -22,9 +22,12 @@ use crate::{
 };
 
 use oxhttp::model::{Request, Response};
-use oxigraph::{sparql::QueryResults, store::Store};
+use oxigraph::{
+    sparql::{QueryResults, QuerySolutionIter},
+    store::Store,
+};
 use sparesults::QueryResultsSerializer;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
@@ -59,36 +62,35 @@ pub(crate) fn configure_and_evaluate_zksparql_query(
         }
     }
     let query = query.ok_or_else(|| bad_request("You should set the 'query' parameter"))?;
-    if proof_required {
-        evaluate_zksparql_prove(store, &query, request).map_err(std::convert::Into::into)
+    let extended_results = if proof_required {
+        evaluate_zksparql_prove(store, &query, request)
     } else {
-        let extended_results = evaluate_zksparql_fetch(store, &query, request)
-            .map_err(std::convert::Into::<HttpError>::into)?;
-        match extended_results {
-            QueryResults::Solutions(solutions) => {
-                let format = query_results_content_negotiation(request)?;
-                ReadForWrite::build_response(
-                    move |w| {
-                        Ok((
-                            QueryResultsSerializer::from_format(format)
-                                .solutions_writer(w, solutions.variables().to_vec())?,
-                            solutions,
-                        ))
-                    },
-                    |(mut writer, mut solutions)| {
-                        Ok(if let Some(solution) = solutions.next() {
-                            writer.write(&solution?)?;
-                            Some((writer, solutions))
-                        } else {
-                            writer.finish()?;
-                            None
-                        })
-                    },
-                    format.media_type(),
-                )
-            }
-            _ => Err(bad_request("invalid query")),
+        evaluate_zksparql_fetch(store, &query, request)
+    };
+    match extended_results? {
+        QueryResults::Solutions(solutions) => {
+            let format = query_results_content_negotiation(request)?;
+            ReadForWrite::build_response(
+                move |w| {
+                    Ok((
+                        QueryResultsSerializer::from_format(format)
+                            .solutions_writer(w, solutions.variables().to_vec())?,
+                        solutions,
+                    ))
+                },
+                |(mut writer, mut solutions)| {
+                    Ok(if let Some(solution) = solutions.next() {
+                        writer.write(&solution?)?;
+                        Some((writer, solutions))
+                    } else {
+                        writer.finish()?;
+                        None
+                    })
+                },
+                format.media_type(),
+            )
         }
+        _ => Err(bad_request("invalid query")),
     }
 }
 
@@ -118,7 +120,7 @@ fn evaluate_zksparql_prove(
     store: &Store,
     query: &str,
     request: &Request,
-) -> Result<Response, ZkSparqlError> {
+) -> Result<QueryResults, ZkSparqlError> {
     // 1. parse a zk-SPARQL query
     let parsed_zk_query = parse_zk_query(query, Some(&base_url(request)))?;
     println!("parsed_zk_query:\n{:#?}\n", parsed_zk_query);
@@ -135,10 +137,13 @@ fn evaluate_zksparql_prove(
         _ => return Err(ZkSparqlError::ExtendedQueryFailed),
     };
 
+    let disclosed_variables = parsed_zk_query.disclosed_variables;
+    println!("disclosed variables:\n{:#?}\n", disclosed_variables);
+
     // 4. pseudonymize the extended prove solutions
     let mut nymizer = Pseudonymizer::default();
     let pseudonymized_solutions =
-        nymizer.pseudonymize_solutions(extended_solutions, &parsed_zk_query.disclosed_variables)?;
+        nymizer.pseudonymize_solutions(extended_solutions, &disclosed_variables)?;
     println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
     // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
@@ -158,7 +163,7 @@ fn evaluate_zksparql_prove(
         .collect::<Result<_, ZkSparqlError>>()?;
 
     // 7. pseudonymize VCs
-    let mut pseudonymized_vcs: HashMap<_, _> = vcs
+    let mut disclosed_vcs: HashMap<_, _> = vcs
         .iter()
         .map(|(cred_graph_id, vc)| {
             Ok((
@@ -168,46 +173,31 @@ fn evaluate_zksparql_prove(
         })
         .collect::<Result<_, ZkSparqlError>>()?;
 
-    // 8. put disclosed subjects into pseudonymized VCs
+    // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
     for (graph_name, quads) in disclosed_subjects {
-        pseudonymized_vcs
+        disclosed_vcs
             .entry(graph_name)
             .and_modify(|vc| vc.subject = quads);
     }
 
     // 9. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
-    let deskolemized_deanon_map = deskolemize_deanon_map(&deanon_map)?;
 
-    // 10. deskolemize VCs
-    let deskolemized_vcs: HashMap<_, _> = deskolemize_vc_map(&vcs)?;
-    let disclosed_vcs: HashMap<_, _> = deskolemize_vc_map(&pseudonymized_vcs)?;
-    println!("deskolemized_vcs:\n{:#?}\n", deskolemized_vcs);
-    println!("deskolemized deanon map:\n{:#?}\n", deskolemized_deanon_map);
-
-    // 11. build VP
-    let _vp = derive_proof(&deskolemized_vcs, &disclosed_vcs, &deanon_map);
+    // 10. build VP
+    let _vp = derive_proof(
+        &deskolemize_vc_map(&vcs)?,
+        &deskolemize_vc_map(&disclosed_vcs)?,
+        &deskolemize_deanon_map(&deanon_map)?,
+    );
 
     // x. return query results
-    todo!()
-    // let format = query_results_content_negotiation(request)?;
-    // ReadForWrite::build_response(
-    //     move |w| {
-    //         Ok((
-    //             QueryResultsSerializer::from_format(format)
-    //                 .solutions_writer(w, extended_solutions.variables().to_vec())?,
-    //             extended_solutions,
-    //         ))
-    //     },
-    //     |(mut writer, mut solutions)| {
-    //         Ok(if let Some(solution) = solutions.next() {
-    //             writer.write(&solution?)?;
-    //             Some((writer, solutions))
-    //         } else {
-    //             writer.finish()?;
-    //             None
-    //         })
-    //     },
-    //     format.media_type(),
-    // )
+    Ok(QueryResults::Solutions(QuerySolutionIter::new(
+        Rc::new(disclosed_variables.clone()),
+        Box::new(pseudonymized_solutions.into_iter().map(move |m| {
+            Ok(disclosed_variables
+                .iter()
+                .map(|v| m.get(v).cloned())
+                .collect::<Vec<_>>())
+        })),
+    )))
 }

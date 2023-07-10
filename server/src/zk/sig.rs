@@ -10,7 +10,7 @@ use super::{
 use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{vocab::xsd, BlankNode, Dataset, GraphName, Literal, NamedNode, Quad, Term};
-use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
+use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
 use std::collections::{HashMap, HashSet};
 
 // TODO: fix name
@@ -36,7 +36,7 @@ impl From<CanonicalizationError> for DeriveProofError {
 pub fn derive_proof(
     vcs: &HashMap<GraphName, VerifiableCredential>,
     disclosed_vcs: &HashMap<GraphName, VerifiableCredential>,
-    deanon_map: &HashMap<NamedNode, Term>,
+    deanon_map: &HashMap<BlankNode, Term>,
 ) -> Result<Vec<Quad>, DeriveProofError> {
     let vc_keys: HashSet<_> = vcs.keys().collect();
     let disclosed_vc_keys: HashSet<_> = disclosed_vcs.keys().collect();
@@ -57,21 +57,19 @@ pub fn derive_proof(
             .unwrap_or(String::new())
     );
 
-    let vp_dataset = Dataset::from_iter(vp);
-    let issued_identifiers_map = issue(&vp_dataset)?;
-    let canonicalized_dataset = relabel(&vp_dataset, &issued_identifiers_map)?;
+    let issued_identifiers_map = issue_quads(&vp)?;
+    let canonicalized_vp = relabel_quads(&vp, &issued_identifiers_map)?;
     println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
     println!(
         "canonicalized dataset:\n{}\n",
-        serialize(&canonicalized_dataset)
+        serialize(&Dataset::from_iter(&canonicalized_vp))
     );
 
     // TODO: extract proof values
 
     // TODO: calculate index mapping
 
-    todo!();
-    Ok(vp)
+    Ok(canonicalized_vp)
 }
 
 fn build_vp_metadata(
