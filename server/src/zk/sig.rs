@@ -1,3 +1,5 @@
+use crate::zk::context::PROOF_VALUE;
+
 use super::{
     builder::VerifiableCredential,
     context::{
@@ -9,7 +11,7 @@ use super::{
 
 use chrono::offset::Utc;
 use oxiri::IriParseError;
-use oxrdf::{vocab::xsd, BlankNode, Dataset, GraphName, Literal, NamedNode, Quad, Term};
+use oxrdf::{vocab::xsd, BlankNode, Dataset, GraphName, Literal, NamedNode, Quad, Term, GraphNameRef};
 use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
 use std::collections::{HashMap, HashSet};
 
@@ -19,6 +21,8 @@ pub enum DeriveProofError {
     CanonicalizationError(CanonicalizationError),
     InvalidVCPairs,
     IriParseError(IriParseError),
+    VCWithoutProofValue,
+    VCWithInvalidProofValue,
     InternalError(String),
 }
 
@@ -45,10 +49,33 @@ pub fn derive_proof(
         return Err(DeriveProofError::InvalidVCPairs);
     }
 
-    // build VP
+    // extract proof values from VC
+    let proof_values: Vec<_> = vcs
+        .iter()
+        .map(|(_, vc)| {
+            let v = &vc
+                .proof
+                .iter()
+                .find(|&q| q.predicate == PROOF_VALUE)
+                .ok_or(DeriveProofError::VCWithoutProofValue)?
+                .object;
+            match v {
+                Term::Literal(literal) => Ok(literal.value()),
+                _ => Err(DeriveProofError::VCWithInvalidProofValue),
+            }
+        })
+        .collect::<Result<_, _>>()?;
+    println!("proof values:\n{:#?}\n", proof_values);
+
+    // remove proof values from disclosed VCs
+    let mut vc_quads: Vec<Vec<Quad>> = disclosed_vcs.iter().map(|(_, vc)| vc.into()).collect();
+    for vc_quad in &mut vc_quads {
+        vc_quad.retain(|q| q.predicate != PROOF_VALUE)
+    }
+
+    // build VP without proof
     let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let mut vp = build_vp_metadata(&vc_keys, &verification_method)?;
-    let vc_quads: Vec<Vec<Quad>> = disclosed_vcs.iter().map(|(_, vc)| vc.into()).collect();
+    let mut vp = build_vp(&vc_keys, &verification_method)?;
     vp.extend(vc_quads.into_iter().flatten());
     println!(
         "vp:\n{}\n",
@@ -58,22 +85,23 @@ pub fn derive_proof(
             .unwrap_or(String::new())
     );
 
+    // canonicalize VP
     let issued_identifiers_map = issue_quads(&vp)?;
     let canonicalized_vp = relabel_quads(&vp, &issued_identifiers_map)?;
     println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
     println!(
-        "canonicalized dataset:\n{}\n",
+        "canonicalized vp:\n{}\n",
         serialize(&Dataset::from_iter(&canonicalized_vp))
     );
 
-    // TODO: extract proof values
-
     // TODO: calculate index mapping
+
+    // TODO: derive proof value
 
     Ok(canonicalized_vp)
 }
 
-fn build_vp_metadata(
+fn build_vp(
     cred_graph_ids: &HashSet<&GraphName>,
     verification_method: &NamedNode,
 ) -> Result<Vec<Quad>, DeriveProofError> {

@@ -43,7 +43,7 @@ const PSEUDONYM_ALPHABETS: [char; 62] = [
     'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
     'V', 'W', 'X', 'Y', 'Z',
 ];
-const CRYPTOSUITE_FOR_VP: &str = "bbsterm-2023";
+const CRYPTOSUITE_FOR_VP: &str = "bbs-term-proof-2023";
 const VP_VARIABLE: &str = "__vp";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
