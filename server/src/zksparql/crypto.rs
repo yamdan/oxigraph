@@ -119,19 +119,57 @@ pub fn derive_proof(
         .collect::<Result<_, DeriveProofError>>()?;
     println!("extended deanon map:\n{:?}\n", extended_deanon_map);
 
-    // deanonymize and split canonicalized VP
+    // split canonicalized VP into graphs and sort them
     let mut vp_graphs: BTreeMap<String, Vec<Triple>> = BTreeMap::new();
     for quad in &canonicalized_vp {
         vp_graphs
             .entry(quad.graph_name.to_string())
             .or_default()
             .push(Triple::new(
-                deanonymize_subject(&extended_deanon_map, quad.subject.clone())?,
+                quad.subject.clone(),
                 quad.predicate.clone(),
-                deanonymize_term(&extended_deanon_map, quad.object.clone())?,
+                quad.object.clone(),
             ));
     }
-    println!("vp graph ids:\n{:?}\n", vp_graphs.keys());
+    for (_, triples) in &mut vp_graphs {
+        triples.sort_by_cached_key(|t| t.to_string());
+    }
+    println!("vp graphs:");
+    for g in vp_graphs.keys() {
+        println!(
+            "{}:\n{}\n",
+            g,
+            vp_graphs
+                .get(g)
+                .unwrap()
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+
+    // deanonymize each splitted graphs, keeping their orders
+    for (_, triples) in &mut vp_graphs {
+        for triple in triples {
+            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
+            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
+        }
+    }
+    println!("deanonymized vp graphs:");
+    for g in vp_graphs.keys() {
+        println!(
+            "{}:\n{}\n",
+            g,
+            vp_graphs
+                .get(g)
+                .unwrap()
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
 
     // TODO: calculate index mapping
 
@@ -142,43 +180,41 @@ pub fn derive_proof(
 
 fn deanonymize_subject(
     deanon_map: &HashMap<BlankNode, Term>,
-    subject: Subject,
-) -> Result<Subject, DeriveProofError> {
-    match &subject {
+    subject: &mut Subject,
+) -> Result<(), DeriveProofError> {
+    match subject {
         Subject::BlankNode(bnode) => {
-            if let Some(v) = deanon_map.get(&bnode) {
+            if let Some(v) = deanon_map.get(bnode) {
                 match v {
-                    Term::NamedNode(n) => Ok(Subject::NamedNode(n.clone())),
-                    Term::BlankNode(n) => Ok(Subject::BlankNode(n.clone())),
-                    _ => Err(DeriveProofError::DeAnonymizationError),
+                    Term::NamedNode(n) => *subject = Subject::NamedNode(n.clone()),
+                    Term::BlankNode(n) => *subject = Subject::BlankNode(n.clone()),
+                    _ => return Err(DeriveProofError::DeAnonymizationError),
                 }
-            } else {
-                Ok(subject)
             }
         }
-        Subject::NamedNode(_) => Ok(subject),
-        Subject::Triple(_) => Err(DeriveProofError::DeAnonymizationError),
-    }
+        Subject::NamedNode(_) => (),
+        Subject::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
+    };
+    Ok(())
 }
 
 fn deanonymize_term(
     deanon_map: &HashMap<BlankNode, Term>,
-    term: Term,
-) -> Result<Term, DeriveProofError> {
-    match &term {
+    term: &mut Term,
+) -> Result<(), DeriveProofError> {
+    match term {
         Term::BlankNode(bnode) => {
-            if let Some(v) = deanon_map.get(&bnode) {
+            if let Some(v) = deanon_map.get(bnode) {
                 match v {
-                    Term::NamedNode(_) | Term::BlankNode(_) | Term::Literal(_) => Ok(v.clone()),
-                    _ => Err(DeriveProofError::DeAnonymizationError),
+                    Term::NamedNode(_) | Term::BlankNode(_) | Term::Literal(_) => *term = v.clone(),
+                    _ => return Err(DeriveProofError::DeAnonymizationError),
                 }
-            } else {
-                Ok(term)
             }
         }
-        Term::NamedNode(_) | Term::Literal(_) => Ok(term),
-        Term::Triple(_) => Err(DeriveProofError::DeAnonymizationError),
-    }
+        Term::NamedNode(_) | Term::Literal(_) => (),
+        Term::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
+    };
+    Ok(())
 }
 
 fn build_vp(
