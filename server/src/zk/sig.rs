@@ -11,7 +11,10 @@ use super::{
 
 use chrono::offset::Utc;
 use oxiri::IriParseError;
-use oxrdf::{vocab::xsd, BlankNode, Dataset, GraphName, Literal, NamedNode, Quad, Term, GraphNameRef};
+use oxrdf::{
+    vocab::xsd, BlankNode, BlankNodeIdParseError, Dataset, GraphName, Literal, NamedNode, Quad,
+    Term,
+};
 use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
 use std::collections::{HashMap, HashSet};
 
@@ -23,6 +26,7 @@ pub enum DeriveProofError {
     IriParseError(IriParseError),
     VCWithoutProofValue,
     VCWithInvalidProofValue,
+    BlankNodeIdParseError(BlankNodeIdParseError),
     InternalError(String),
 }
 
@@ -35,6 +39,12 @@ impl From<IriParseError> for DeriveProofError {
 impl From<CanonicalizationError> for DeriveProofError {
     fn from(e: CanonicalizationError) -> Self {
         Self::CanonicalizationError(e)
+    }
+}
+
+impl From<BlankNodeIdParseError> for DeriveProofError {
+    fn from(e: BlankNodeIdParseError) -> Self {
+        Self::BlankNodeIdParseError(e)
     }
 }
 
@@ -89,10 +99,26 @@ pub fn derive_proof(
     let issued_identifiers_map = issue_quads(&vp)?;
     let canonicalized_vp = relabel_quads(&vp, &issued_identifiers_map)?;
     println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
+    println!("deanon map:\n{:#?}\n", deanon_map);
+
     println!(
         "canonicalized vp:\n{}\n",
         serialize(&Dataset::from_iter(&canonicalized_vp))
     );
+
+    // construct extended deanonymization map
+    let extended_deanon_map: HashMap<_, _> = issued_identifiers_map
+        .into_iter()
+        .map(|(bnid, cnid)| {
+            let bnode = BlankNode::new(bnid)?;
+            if let Some(v) = deanon_map.get(&bnode) {
+                Ok((cnid, v.clone()))
+            } else {
+                Ok((cnid, bnode.into()))
+            }
+        })
+        .collect::<Result<_, DeriveProofError>>()?;
+    println!("extended deanon map:\n{:?}\n", extended_deanon_map);
 
     // TODO: calculate index mapping
 
