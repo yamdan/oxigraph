@@ -13,10 +13,10 @@ use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{
     vocab::xsd, BlankNode, BlankNodeIdParseError, Dataset, GraphName, Literal, NamedNode, Quad,
-    Term,
+    Term, Triple,
 };
 use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // TODO: fix name
 #[derive(Debug)]
@@ -119,6 +119,22 @@ pub fn derive_proof(
         })
         .collect::<Result<_, DeriveProofError>>()?;
     println!("extended deanon map:\n{:?}\n", extended_deanon_map);
+
+    // TODO: split canonicalized VP into graphs
+    let mut vp_graphs: BTreeMap<String, Vec<Triple>> = BTreeMap::new();
+    for quad in &canonicalized_vp {
+        vp_graphs
+            .entry(quad.graph_name.to_string())
+            .or_default()
+            .push(Triple::new(
+                quad.subject.clone(),
+                quad.predicate.clone(),
+                quad.object.clone(),
+            ));
+    }
+    println!("vp graphs:\n{:#?}\n", vp_graphs);
+
+    // TODO: apply extended deanonymization map to canonicalized VP
 
     // TODO: calculate index mapping
 
