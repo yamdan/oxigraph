@@ -1,4 +1,4 @@
-use super::sig::DeriveProofError;
+use super::crypto::DeriveProofError;
 use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};

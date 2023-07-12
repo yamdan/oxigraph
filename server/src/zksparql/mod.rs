@@ -1,9 +1,9 @@
 mod builder;
 mod context;
+mod crypto;
 mod error;
 mod nymizer;
 mod parser;
-mod sig;
 
 use crate::{
     bad_request, base_url, query_results_content_negotiation,
@@ -13,10 +13,10 @@ use crate::{
             deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,
             pseudonymize_metadata_and_proofs,
         },
+        crypto::derive_proof,
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
-        sig::derive_proof,
     },
     HttpError, ReadForWrite,
 };
