@@ -12,7 +12,7 @@ use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{
     vocab::xsd, BlankNode, BlankNodeIdParseError, Dataset, GraphName, Literal, NamedNode, Quad,
-    Term, Triple,
+    Subject, Term, Triple,
 };
 use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -26,6 +26,7 @@ pub enum DeriveProofError {
     VCWithoutProofValue,
     VCWithInvalidProofValue,
     BlankNodeIdParseError(BlankNodeIdParseError),
+    DeAnonymizationError,
     InternalError(String),
 }
 
@@ -99,7 +100,6 @@ pub fn derive_proof(
     let canonicalized_vp = relabel_quads(&vp, &issued_identifiers_map)?;
     println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
     println!("deanon map:\n{:#?}\n", deanon_map);
-
     println!(
         "canonicalized vp:\n{}\n",
         serialize(&Dataset::from_iter(&canonicalized_vp))
@@ -111,35 +111,74 @@ pub fn derive_proof(
         .map(|(bnid, cnid)| {
             let bnode = BlankNode::new(bnid)?;
             if let Some(v) = deanon_map.get(&bnode) {
-                Ok((cnid, v.clone()))
+                Ok((BlankNode::new(cnid)?, v.clone()))
             } else {
-                Ok((cnid, bnode.into()))
+                Ok((BlankNode::new(cnid)?, bnode.into()))
             }
         })
         .collect::<Result<_, DeriveProofError>>()?;
     println!("extended deanon map:\n{:?}\n", extended_deanon_map);
 
-    // TODO: split canonicalized VP into graphs
+    // deanonymize and split canonicalized VP
     let mut vp_graphs: BTreeMap<String, Vec<Triple>> = BTreeMap::new();
     for quad in &canonicalized_vp {
         vp_graphs
             .entry(quad.graph_name.to_string())
             .or_default()
             .push(Triple::new(
-                quad.subject.clone(),
+                deanonymize_subject(&extended_deanon_map, quad.subject.clone())?,
                 quad.predicate.clone(),
-                quad.object.clone(),
+                deanonymize_term(&extended_deanon_map, quad.object.clone())?,
             ));
     }
-    println!("vp graphs:\n{:#?}\n", vp_graphs);
-
-    // TODO: apply extended deanonymization map to canonicalized VP
+    println!("vp graph ids:\n{:?}\n", vp_graphs.keys());
 
     // TODO: calculate index mapping
 
     // TODO: derive proof value
 
     Ok(canonicalized_vp)
+}
+
+fn deanonymize_subject(
+    deanon_map: &HashMap<BlankNode, Term>,
+    subject: Subject,
+) -> Result<Subject, DeriveProofError> {
+    match &subject {
+        Subject::BlankNode(bnode) => {
+            if let Some(v) = deanon_map.get(&bnode) {
+                match v {
+                    Term::NamedNode(n) => Ok(Subject::NamedNode(n.clone())),
+                    Term::BlankNode(n) => Ok(Subject::BlankNode(n.clone())),
+                    _ => Err(DeriveProofError::DeAnonymizationError),
+                }
+            } else {
+                Ok(subject)
+            }
+        }
+        Subject::NamedNode(_) => Ok(subject),
+        Subject::Triple(_) => Err(DeriveProofError::DeAnonymizationError),
+    }
+}
+
+fn deanonymize_term(
+    deanon_map: &HashMap<BlankNode, Term>,
+    term: Term,
+) -> Result<Term, DeriveProofError> {
+    match &term {
+        Term::BlankNode(bnode) => {
+            if let Some(v) = deanon_map.get(&bnode) {
+                match v {
+                    Term::NamedNode(_) | Term::BlankNode(_) | Term::Literal(_) => Ok(v.clone()),
+                    _ => Err(DeriveProofError::DeAnonymizationError),
+                }
+            } else {
+                Ok(term)
+            }
+        }
+        Term::NamedNode(_) | Term::Literal(_) => Ok(term),
+        Term::Triple(_) => Err(DeriveProofError::DeAnonymizationError),
+    }
 }
 
 fn build_vp(
