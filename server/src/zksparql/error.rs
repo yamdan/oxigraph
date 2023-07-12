@@ -1,3 +1,4 @@
+use super::sig::DeriveProofError;
 use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
@@ -5,8 +6,6 @@ use oxiri::IriParseError;
 use oxrdf::{BlankNode, NamedNode, VariableNameParseError};
 use rdf_canon::CanonicalizationError;
 use spargebra::ParseError;
-
-use super::sig::DeriveProofError;
 
 pub enum ZkSparqlError {
     ConstructNotSupported,

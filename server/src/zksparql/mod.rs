@@ -7,7 +7,7 @@ mod sig;
 
 use crate::{
     bad_request, base_url, query_results_content_negotiation,
-    zk::{
+    zksparql::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
             deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,

@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 use std::{fmt, fs, str};
 use url::form_urlencoded;
 
-mod zk;
-use zk::configure_and_evaluate_zksparql_query;
+mod zksparql;
+use zksparql::configure_and_evaluate_zksparql_query;
 
 const MAX_SPARQL_BODY_SIZE: u64 = 0x0010_0000;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
