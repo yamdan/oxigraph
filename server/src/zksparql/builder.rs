@@ -248,8 +248,8 @@ fn build_extended_query(
 pub fn build_disclosed_subjects(
     solutions: &[HashMap<Variable, Term>],
     extended_triple_patterns: &[TriplePatternWithGraphVar],
-) -> Result<HashMap<GraphName, Vec<Quad>>, ZkSparqlError> {
-    let mut res: HashMap<_, Vec<_>> = HashMap::new();
+) -> Result<HashMap<GraphName, HashSet<Quad>>, ZkSparqlError> {
+    let mut res: HashMap<_, HashSet<_>> = HashMap::new();
 
     let disclosed_subjects = solutions
         .iter()
@@ -261,7 +261,7 @@ pub fn build_disclosed_subjects(
         })
         .collect::<Result<Vec<_>, ZkSparqlError>>()?;
     for (g, quad) in disclosed_subjects.into_iter().flatten() {
-        res.entry(g).or_insert_with(Vec::new).push(quad);
+        res.entry(g).or_insert_with(HashSet::new).insert(quad);
     }
     Ok(res)
 }

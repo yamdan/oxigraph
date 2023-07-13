@@ -179,7 +179,7 @@ fn evaluate_zksparql_prove(
     for (graph_name, quads) in disclosed_subjects {
         disclosed_vcs
             .entry(graph_name)
-            .and_modify(|vc| vc.subject = quads);
+            .and_modify(|vc| vc.subject = quads.into_iter().collect());
     }
 
     // 9. get deanonymization map
