@@ -1,8 +1,8 @@
 # <urn:bnid:vc0>
 ## subject
-<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc0.subject> .
-<did:example:xyz> <http://schema.org/name> "John Smith" <urn:bnid:vc0.subject> .
-<did:example:xyz> <http://example.org/vocab/isPatientOf> <urn:bnid:vc0.c14n0> <urn:bnid:vc0.subject> .
+<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc0.subject> .
+<did:example:john> <http://schema.org/name> "John Smith" <urn:bnid:vc0.subject> .
+<did:example:john> <http://example.org/vocab/isPatientOf> <urn:bnid:vc0.c14n0> <urn:bnid:vc0.subject> .
 <urn:bnid:vc0.c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc0.subject> .
 <urn:bnid:vc0.c14n0> <http://example.org/vocab/lotNumber> "0000001" <urn:bnid:vc0.subject> .
 <urn:bnid:vc0.c14n0> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0.subject> .
@@ -10,7 +10,7 @@
 <urn:bnid:vc0.c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> <urn:bnid:vc0.subject> .
 ## metadata
 <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:bnid:vc0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:bnid:vc0> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> <urn:bnid:vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> <urn:bnid:vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0> .
@@ -25,16 +25,16 @@
 
 # <urn:bnid:vc1>
 ## subject
-<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc1.subject> .
-<did:example:xyz> <http://schema.org/name> "John Smith" <urn:bnid:vc1.subject> .
-<did:example:xyz> <http://example.org/vocab/isPatientOf> <http://example.org/vaccination/01> <urn:bnid:vc1.subject> .
+<did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc1.subject> .
+<did:example:john> <http://schema.org/name> "John Smith" <urn:bnid:vc1.subject> .
+<did:example:john> <http://example.org/vocab/isPatientOf> <http://example.org/vaccination/01> <urn:bnid:vc1.subject> .
 <http://example.org/vaccination/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc1.subject> .
 <http://example.org/vaccination/01> <http://example.org/vocab/lotNumber> "1111111" <urn:bnid:vc1.subject> .
 <http://example.org/vaccination/01> <http://example.org/vocab/vaccinationDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1.subject> .
 <http://example.org/vaccination/01> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc1.subject> .
 ## metadata
 <http://example.org/vcred/01> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:bnid:vc1> .
-<http://example.org/vcred/01> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:bnid:vc1> .
+<http://example.org/vcred/01> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> <urn:bnid:vc1> .
 <http://example.org/vcred/01> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> <urn:bnid:vc1> .
 <http://example.org/vcred/01> <https://www.w3.org/2018/credentials#issuanceDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1> .
 <http://example.org/vcred/01> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1> .
@@ -49,16 +49,16 @@
 
 # <urn:bnid:vc2>
 ## subject
-<did:example:xyz> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc2.subject> .
-<did:example:xyz> <http://schema.org/name> "Jane Doe" <urn:bnid:vc2.subject> .
-<did:example:xyz> <http://example.org/vocab/isPatientOf> <urn:bnid:vc2.c14n0> <urn:bnid:vc2.subject> .
+<did:example:jane> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc2.subject> .
+<did:example:jane> <http://schema.org/name> "Jane Smith" <urn:bnid:vc2.subject> .
+<did:example:jane> <http://example.org/vocab/isPatientOf> <urn:bnid:vc2.c14n0> <urn:bnid:vc2.subject> .
 <urn:bnid:vc2.c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc2.subject> .
 <urn:bnid:vc2.c14n0> <http://example.org/vocab/lotNumber> "1234567" <urn:bnid:vc2.subject> .
 <urn:bnid:vc2.c14n0> <http://example.org/vocab/vaccinationDate> "2022-05-05T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2.subject> .
 <urn:bnid:vc2.c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc2.subject> .
 ## metadata
 <http://example.org/vcred/02> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:bnid:vc2> .
-<http://example.org/vcred/02> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:xyz> <urn:bnid:vc2> .
+<http://example.org/vcred/02> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:jane> <urn:bnid:vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <urn:bnid:vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#issuanceDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2> .
