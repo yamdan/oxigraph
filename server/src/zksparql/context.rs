@@ -15,3 +15,4 @@ pub const PROOF_PURPOSE: &str = "https://w3id.org/security#proofPurpose";
 pub const PROOF_VALUE: &str = "https://w3id.org/security#proofValue";
 pub const VERIFICATION_METHOD: &str = "https://w3id.org/security#verificationMethod";
 pub const ASSERTION_METHOD: &str = "https://w3id.org/security#assertionMethod";
+pub const FILTER: &str = "https://zkp-ld.org/security#filter";

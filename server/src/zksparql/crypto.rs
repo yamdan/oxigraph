@@ -1,7 +1,7 @@
 use super::{
     builder::VerifiableCredential,
     context::{
-        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, PROOF, PROOF_PURPOSE,
+        ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
         PROOF_VALUE, RDF_TYPE, VERIFIABLE_CREDENTIAL, VERIFIABLE_PRESENTATION_TYPE,
         VERIFICATION_METHOD,
     },
@@ -27,6 +27,7 @@ pub enum DeriveProofError {
     VCWithInvalidProofValue,
     BlankNodeIdParseError(BlankNodeIdParseError),
     DeAnonymizationError,
+    InvalidVP,
     InternalError(String),
 }
 
@@ -149,21 +150,68 @@ pub fn derive_proof(
         );
     }
 
-    // deanonymize each splitted graphs, keeping their orders
-    for (_, triples) in &mut vp_graphs {
-        for triple in triples {
+    // process VP metadata (default graph)
+    let vp_metadata = vp_graphs
+        .remove("DEFAULT")
+        .ok_or(DeriveProofError::InternalError(
+            "VP graphs must have default graph".to_owned(),
+        ))?;
+
+    // extract VC graphs
+    let mut vc_graphs = remove_graphs(&mut vp_graphs, &vp_metadata, VERIFIABLE_CREDENTIAL)?;
+    println!("VC graphs:\n{:#?}\n", vc_graphs);
+
+    // extract VC proof graphs
+    let mut vc_proof_graphs = vc_graphs
+        .iter()
+        .map(|vc| remove_graph(&mut vp_graphs, vc, PROOF))
+        .collect::<Result<Vec<_>, _>>()?;
+    println!("VC proof graphs:\n{:#?}\n", vc_proof_graphs);
+
+    // extract VP proof graph
+    let vp_proof_graph = remove_graph(&mut vp_graphs, &vp_metadata, PROOF)?;
+    println!("VP proof graph:\n{:#?}\n", vp_proof_graph);
+
+    // extract filter graphs if any
+    let filter_graphs = remove_graphs(&mut vp_graphs, &vp_proof_graph, FILTER)?;
+    println!("filter graphs:\n{:#?}\n", filter_graphs);
+
+    // check that `vp_graphs` is empty
+    if !vp_graphs.is_empty() {
+        return Err(DeriveProofError::InvalidVP);
+    }
+
+    // deanonymize each VC graphs, keeping their orders
+    for vc_graph in &mut vc_graphs {
+        for triple in vc_graph {
             deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
             deanonymize_term(&extended_deanon_map, &mut triple.object)?;
         }
     }
-    println!("deanonymized vp graphs:");
-    for g in vp_graphs.keys() {
+    println!("deanonymized vc graphs:");
+    for vc_graph in vc_graphs {
         println!(
-            "{}:\n{}\n",
-            g,
-            vp_graphs
-                .get(g)
+            "{}\n",
+            vc_graph
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
                 .unwrap()
+        );
+    }
+
+    // deanonymize each VC proof graphs, keeping their orders
+    for vc_proof_graph in &mut vc_proof_graphs {
+        for triple in vc_proof_graph {
+            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
+            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
+        }
+    }
+    println!("deanonymized vc proof graphs:");
+    for vc_proof_graph in vc_proof_graphs {
+        println!(
+            "{}\n",
+            vc_proof_graph
                 .iter()
                 .map(|t| format!("{} .\n", t.to_string()))
                 .reduce(|l, r| format!("{}{}", l, r))
@@ -176,6 +224,42 @@ pub fn derive_proof(
     // TODO: derive proof value
 
     Ok(canonicalized_vp)
+}
+
+// function to remove from the VP the multiple graphs that are reachable from `source` via `link`
+fn remove_graphs(
+    vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
+    source: &Vec<Triple>,
+    link: &str,
+) -> Result<Vec<Vec<Triple>>, DeriveProofError> {
+    source
+        .iter()
+        .filter(|triple| triple.predicate == link)
+        .map(|triple| {
+            Ok(vp_graphs
+                .remove(&triple.object.to_string())
+                .ok_or(DeriveProofError::InvalidVP)?)
+        })
+        .collect::<Result<Vec<_>, DeriveProofError>>()
+}
+
+// function to remove from the VP the single graph that is reachable from `source` via `link`
+fn remove_graph(
+    vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
+    source: &Vec<Triple>,
+    link: &str,
+) -> Result<Vec<Triple>, DeriveProofError> {
+    let mut graphs = remove_graphs(vp_graphs, source, link)?;
+    match graphs.pop() {
+        Some(graph) => {
+            if graphs.is_empty() {
+                Ok(graph)
+            } else {
+                Err(DeriveProofError::InvalidVP)
+            }
+        }
+        None => Err(DeriveProofError::InvalidVP),
+    }
 }
 
 fn deanonymize_subject(
