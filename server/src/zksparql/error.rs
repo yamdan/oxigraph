@@ -26,6 +26,9 @@ pub enum ZkSparqlError {
     CanonicalizationError(CanonicalizationError),
     VariableNameParseError(VariableNameParseError),
     DeriveProofError(DeriveProofError),
+    InvalidVCWithMultipleProofs,
+    InvalidVCWithoutProofs,
+    InvalidVCWithInvalidProofGraphName,
     InternalError(String),
 }
 
@@ -108,6 +111,13 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::DeriveProofError(e) => {
                 bad_request(format!("derive proof failed: {:?}", e))
+            }
+            ZkSparqlError::InvalidVCWithMultipleProofs => {
+                bad_request("invalid VC with multiple proofs")
+            }
+            ZkSparqlError::InvalidVCWithoutProofs => bad_request("invalid VC without proofs"),
+            ZkSparqlError::InvalidVCWithInvalidProofGraphName => {
+                bad_request("invalid VC with invalid proof graph name")
             }
             ZkSparqlError::InternalError(msg) => bad_request(format!("internal error: {}", msg)),
         }

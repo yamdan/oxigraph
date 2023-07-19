@@ -1,9 +1,8 @@
 use super::{
-    builder::VerifiableCredential,
     context::{
         ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
-        PROOF_VALUE, RDF_TYPE, VERIFIABLE_CREDENTIAL, VERIFIABLE_PRESENTATION_TYPE,
-        VERIFICATION_METHOD,
+        PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
+        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
     },
     CRYPTOSUITE_FOR_VP,
 };
@@ -11,11 +10,12 @@ use super::{
 use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{
-    vocab::xsd, BlankNode, BlankNodeIdParseError, Dataset, GraphName, Literal, NamedNode, Quad,
-    Subject, Term, Triple,
+    vocab::{rdf::TYPE, xsd},
+    BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, GraphName, Literal, NamedNode,
+    NamedNodeRef, Quad, Subject, Term, Triple,
 };
 use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 // TODO: fix name
 #[derive(Debug)]
@@ -24,7 +24,9 @@ pub enum DeriveProofError {
     InvalidVCPairs,
     IriParseError(IriParseError),
     VCWithoutProofValue,
+    VCWithoutVCType,
     VCWithInvalidProofValue,
+    InvalidVCGraphName,
     BlankNodeIdParseError(BlankNodeIdParseError),
     DeAnonymizationError,
     InvalidVP,
@@ -49,23 +51,35 @@ impl From<BlankNodeIdParseError> for DeriveProofError {
     }
 }
 
+pub struct VcWithDisclosed {
+    vc: Vec<Quad>,
+    disclosed_vc: Vec<Quad>,
+}
+
+impl VcWithDisclosed {
+    pub fn new(vc: Vec<Quad>, disclosed_vc: Vec<Quad>) -> Self {
+        Self { vc, disclosed_vc }
+    }
+}
+
 pub fn derive_proof(
-    vcs: &HashMap<GraphName, VerifiableCredential>,
-    disclosed_vcs: &HashMap<GraphName, VerifiableCredential>,
+    vcs: &Vec<VcWithDisclosed>,
     deanon_map: &HashMap<BlankNode, Term>,
 ) -> Result<Vec<Quad>, DeriveProofError> {
-    let vc_keys: HashSet<_> = vcs.keys().collect();
-    let disclosed_vc_keys: HashSet<_> = disclosed_vcs.keys().collect();
-    if vc_keys != disclosed_vc_keys {
+    // VCs must not be empty
+    if vcs.is_empty() {
         return Err(DeriveProofError::InvalidVCPairs);
     }
 
+    // TODO:
+    // each disclosed VCs must be the derived subset of corresponding VCs via deanon map
+
     // extract proof values from VC
-    let proof_values: Vec<_> = vcs
+    let proof_values = vcs
         .iter()
-        .map(|(_, vc)| {
+        .map(|vc| {
             let v = &vc
-                .proof
+                .vc
                 .iter()
                 .find(|&q| q.predicate == PROOF_VALUE)
                 .ok_or(DeriveProofError::VCWithoutProofValue)?
@@ -75,19 +89,37 @@ pub fn derive_proof(
                 _ => Err(DeriveProofError::VCWithInvalidProofValue),
             }
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     println!("proof values:\n{:#?}\n", proof_values);
 
-    // remove proof values from disclosed VCs
-    let mut vc_quads: Vec<Vec<Quad>> = disclosed_vcs.iter().map(|(_, vc)| vc.into()).collect();
-    for vc_quad in &mut vc_quads {
-        vc_quad.retain(|q| q.predicate != PROOF_VALUE)
+    // remove `proofValue`s from disclosed VCs
+    let mut disclosed_vc_quads: Vec<Vec<Quad>> =
+        vcs.iter().map(|vc| vc.disclosed_vc.clone()).collect();
+    for disclosed_vc_quad in &mut disclosed_vc_quads {
+        disclosed_vc_quad.retain(|q| q.predicate != PROOF_VALUE)
     }
+
+    // construct VC graph keys
+    let disclosed_vc_graph_names = vcs
+        .iter()
+        .map(|vc| {
+            let g = &vc
+                .disclosed_vc
+                .iter()
+                .find(|&q| q.predicate == TYPE && q.object == VERIFIABLE_CREDENTIAL_TYPE.into())
+                .ok_or(DeriveProofError::VCWithoutVCType)?
+                .graph_name;
+            match g {
+                GraphName::BlankNode(n) => Ok(n.as_ref()),
+                _ => Err(DeriveProofError::InvalidVCGraphName),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     // build VP without proof
     let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let mut vp = build_vp(&vc_keys, &verification_method)?;
-    vp.extend(vc_quads.into_iter().flatten());
+    let mut vp = build_vp(&disclosed_vc_graph_names, &verification_method)?;
+    vp.extend(disclosed_vc_quads.into_iter().flatten());
     println!(
         "vp:\n{}\n",
         vp.iter()
@@ -156,21 +188,56 @@ pub fn derive_proof(
         .ok_or(DeriveProofError::InternalError(
             "VP graphs must have default graph".to_owned(),
         ))?;
+    println!(
+        "VP metadata:\n{}\n",
+        vp_metadata
+            .iter()
+            .map(|t| format!("{} .\n", t.to_string()))
+            .reduce(|l, r| format!("{}{}", l, r))
+            .unwrap()
+    );
 
     // extract VC graphs
     let mut vc_graphs = remove_graphs(&mut vp_graphs, &vp_metadata, VERIFIABLE_CREDENTIAL)?;
-    println!("VC graphs:\n{:#?}\n", vc_graphs);
+    println!("VC graphs:");
+    for vc_graph in &vc_graphs {
+        println!(
+            "{}",
+            vc_graph
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
 
     // extract VC proof graphs
     let mut vc_proof_graphs = vc_graphs
         .iter()
         .map(|vc| remove_graph(&mut vp_graphs, vc, PROOF))
         .collect::<Result<Vec<_>, _>>()?;
-    println!("VC proof graphs:\n{:#?}\n", vc_proof_graphs);
+    println!("VC proof graphs:");
+    for vc_proof_graph in &vc_proof_graphs {
+        println!(
+            "{}",
+            vc_proof_graph
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
 
     // extract VP proof graph
     let vp_proof_graph = remove_graph(&mut vp_graphs, &vp_metadata, PROOF)?;
-    println!("VP proof graph:\n{:#?}\n", vp_proof_graph);
+    println!(
+        "VP proof graph:\n{}\n",
+        vp_proof_graph
+            .iter()
+            .map(|t| format!("{} .\n", t.to_string()))
+            .reduce(|l, r| format!("{}{}", l, r))
+            .unwrap()
+    );
 
     // extract filter graphs if any
     let filter_graphs = remove_graphs(&mut vp_graphs, &vp_proof_graph, FILTER)?;
@@ -188,10 +255,10 @@ pub fn derive_proof(
             deanonymize_term(&extended_deanon_map, &mut triple.object)?;
         }
     }
-    println!("deanonymized vc graphs:");
-    for vc_graph in vc_graphs {
+    println!("deanonymized VC graphs:");
+    for vc_graph in &vc_graphs {
         println!(
-            "{}\n",
+            "{}",
             vc_graph
                 .iter()
                 .map(|t| format!("{} .\n", t.to_string()))
@@ -207,10 +274,10 @@ pub fn derive_proof(
             deanonymize_term(&extended_deanon_map, &mut triple.object)?;
         }
     }
-    println!("deanonymized vc proof graphs:");
-    for vc_proof_graph in vc_proof_graphs {
+    println!("deanonymized VC proof graphs:");
+    for vc_proof_graph in &vc_proof_graphs {
         println!(
-            "{}\n",
+            "{}",
             vc_proof_graph
                 .iter()
                 .map(|t| format!("{} .\n", t.to_string()))
@@ -221,6 +288,10 @@ pub fn derive_proof(
 
     // TODO: calculate index mapping
 
+    // TODO: calculate reveal index
+
+    // TODO: calculate meta statements
+
     // TODO: derive proof value
 
     Ok(canonicalized_vp)
@@ -230,7 +301,7 @@ pub fn derive_proof(
 fn remove_graphs(
     vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
     source: &Vec<Triple>,
-    link: &str,
+    link: NamedNodeRef,
 ) -> Result<Vec<Vec<Triple>>, DeriveProofError> {
     source
         .iter()
@@ -247,7 +318,7 @@ fn remove_graphs(
 fn remove_graph(
     vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
     source: &Vec<Triple>,
-    link: &str,
+    link: NamedNodeRef,
 ) -> Result<Vec<Triple>, DeriveProofError> {
     let mut graphs = remove_graphs(vp_graphs, source, link)?;
     match graphs.pop() {
@@ -302,7 +373,7 @@ fn deanonymize_term(
 }
 
 fn build_vp(
-    cred_graph_ids: &HashSet<&GraphName>,
+    vc_graph_names: &Vec<BlankNodeRef>,
     verification_method: &NamedNode,
 ) -> Result<Vec<Quad>, DeriveProofError> {
     let vp_id = BlankNode::default();
@@ -311,63 +382,56 @@ fn build_vp(
     let mut vp = vec![
         Quad::new(
             vp_id.clone(),
-            NamedNode::new(RDF_TYPE)?,
-            NamedNode::new(VERIFIABLE_PRESENTATION_TYPE)?,
+            TYPE,
+            VERIFIABLE_PRESENTATION_TYPE,
             GraphName::DefaultGraph,
         ),
         Quad::new(
             vp_id.clone(),
-            NamedNode::new(PROOF)?,
+            PROOF,
             vp_proof_graph_id.clone(),
             GraphName::DefaultGraph,
         ),
     ];
-    let vcs: Vec<_> = cred_graph_ids
+    let vcs = vc_graph_names
         .iter()
-        .map(|cred_graph_id| {
-            let cred_graph_id = match cred_graph_id {
-                GraphName::NamedNode(n) => Ok(Term::NamedNode(n.clone())),
-                GraphName::BlankNode(n) => Ok(Term::BlankNode(n.clone())),
-                GraphName::DefaultGraph => Err(DeriveProofError::InternalError(
-                    "stored VC must not in the default graph".to_owned(),
-                )),
-            }?;
+        .map(|vc_graph_name| {
             Ok(Quad::new(
                 vp_id.clone(),
-                NamedNode::new(VERIFIABLE_CREDENTIAL)?,
-                cred_graph_id,
+                VERIFIABLE_CREDENTIAL,
+                *vc_graph_name,
                 GraphName::DefaultGraph,
             ))
         })
-        .collect::<Result<_, DeriveProofError>>()?;
+        .collect::<Result<Vec<_>, DeriveProofError>>()?;
     let vp_proof = vec![
         Quad::new(
             vp_proof_id.clone(),
-            NamedNode::new(RDF_TYPE)?,
-            NamedNode::new(DATA_INTEGRITY_PROOF)?,
+            TYPE,
+            DATA_INTEGRITY_PROOF,
             vp_proof_graph_id.clone(),
         ),
         Quad::new(
             vp_proof_id.clone(),
-            NamedNode::new(CRYPTOSUITE)?,
+            CRYPTOSUITE,
             Literal::new_simple_literal(CRYPTOSUITE_FOR_VP),
             vp_proof_graph_id.clone(),
         ),
         Quad::new(
             vp_proof_id.clone(),
-            NamedNode::new(PROOF_PURPOSE)?,
-            NamedNode::new(ASSERTION_METHOD)?,
+            PROOF_PURPOSE,
+            ASSERTION_METHOD,
             vp_proof_graph_id.clone(),
         ),
         Quad::new(
             vp_proof_id.clone(),
-            NamedNode::new(VERIFICATION_METHOD)?,
+            VERIFICATION_METHOD,
             verification_method.clone(),
             vp_proof_graph_id.clone(),
         ),
         Quad::new(
             vp_proof_id,
-            NamedNode::new(CREATED)?,
+            CREATED,
             Literal::new_typed_literal(format!("{:?}", Utc::now()), xsd::DATE_TIME),
             vp_proof_graph_id,
         ),

@@ -13,7 +13,7 @@ use crate::{
             deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,
             pseudonymize_metadata_and_proofs,
         },
-        crypto::derive_proof,
+        crypto::{derive_proof, VcWithDisclosed},
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
@@ -33,10 +33,8 @@ use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
-const PROOF_GRAPH_SUFFIX: &str = ".proof";
 const VC_VARIABLE_PREFIX: &str = "__vc";
 const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
-// const PSEUDONYMOUS_VAR_PREFIX: &str = "urn:var:";
 const PSEUDONYM_ALPHABETS: [char; 62] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
     'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
@@ -154,7 +152,7 @@ fn evaluate_zksparql_prove(
     println!("disclosed subjects:\n{:#?}\n", disclosed_subjects);
 
     // 6. get associated VCs
-    let vcs: HashMap<_, _> = disclosed_subjects
+    let vcs = disclosed_subjects
         .keys()
         .map(|cred_graph_id| {
             Ok((
@@ -162,10 +160,10 @@ fn evaluate_zksparql_prove(
                 get_verifiable_credential(cred_graph_id, store)?,
             ))
         })
-        .collect::<Result<_, ZkSparqlError>>()?;
+        .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
 
     // 7. pseudonymize VCs
-    let mut disclosed_vcs: HashMap<_, _> = vcs
+    let mut disclosed_vcs = vcs
         .iter()
         .map(|(cred_graph_id, vc)| {
             Ok((
@@ -173,7 +171,7 @@ fn evaluate_zksparql_prove(
                 pseudonymize_metadata_and_proofs(cred_graph_id, vc, store, &mut nymizer)?,
             ))
         })
-        .collect::<Result<_, ZkSparqlError>>()?;
+        .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
 
     // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
     for (graph_name, quads) in disclosed_subjects {
@@ -185,14 +183,20 @@ fn evaluate_zksparql_prove(
     // 9. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
 
-    // 10. build VP
-    let vp = derive_proof(
-        &deskolemize_vc_map(&vcs)?,
-        &deskolemize_vc_map(&disclosed_vcs)?,
-        &deskolemize_deanon_map(&deanon_map)?,
-    )?;
+    // 10. deskolemize
+    let deskolemized_vcs = deskolemize_vc_map(&vcs)?;
+    let deskolemized_disclosed_vcs = deskolemize_vc_map(&disclosed_vcs)?;
+    let deskolemized_deanon_map = deskolemize_deanon_map(&deanon_map)?;
 
-    // 11. add VP to the solution
+    // 11. build VP
+    let vc_with_disclosed: Vec<VcWithDisclosed> = deskolemized_vcs
+        .iter()
+        .zip(deskolemized_disclosed_vcs.iter())
+        .map(|((_, vc), (_, disclosed_vc))| VcWithDisclosed::new(vc.into(), disclosed_vc.into()))
+        .collect();
+    let vp = derive_proof(&vc_with_disclosed, &deskolemized_deanon_map)?;
+
+    // 12. add VP to the solution
     disclosed_variables.push(Variable::new(VP_VARIABLE)?);
     for solution in &mut pseudonymized_solutions {
         solution.insert(
@@ -207,7 +211,7 @@ fn evaluate_zksparql_prove(
         );
     }
 
-    // 12. return query results
+    // 13. return query results
     Ok(QueryResults::Solutions(QuerySolutionIter::new(
         Rc::new(disclosed_variables.clone()),
         Box::new(pseudonymized_solutions.into_iter().map(move |m| {

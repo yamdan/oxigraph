@@ -20,11 +20,6 @@ impl Pseudonymizer {
         NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
     }
 
-    // pub fn generate_pseudonymous_var() -> NamedNode {
-    //     let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
-    //     NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_VAR_PREFIX, val))
-    // }
-
     fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
         self.iri_to_nym.get(iri).cloned()
     }
