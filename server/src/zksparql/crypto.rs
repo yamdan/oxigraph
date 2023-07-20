@@ -11,10 +11,10 @@ use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{
     vocab::{rdf::TYPE, xsd},
-    BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, GraphName, Literal, NamedNode,
-    NamedNodeRef, Quad, Subject, Term, Triple,
+    BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode,
+    NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
-use rdf_canon::{canon::serialize, issue_quads, relabel_quads, CanonicalizationError};
+use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
 use std::collections::{BTreeMap, HashMap};
 
 // TODO: fix name
@@ -51,41 +51,93 @@ impl From<BlankNodeIdParseError> for DeriveProofError {
     }
 }
 
+pub struct VerifiableCredential {
+    document: Graph,
+    proof: Graph,
+}
+
+impl VerifiableCredential {
+    pub fn new(document: Graph, proof: Graph) -> Self {
+        Self { document, proof }
+    }
+}
+
 pub struct VcWithDisclosed {
-    vc: Vec<Quad>,
-    disclosed_vc: Vec<Quad>,
+    vc: VerifiableCredential,
+    disclosed: VerifiableCredential,
 }
 
 impl VcWithDisclosed {
-    pub fn new(vc: Vec<Quad>, disclosed_vc: Vec<Quad>) -> Self {
-        Self { vc, disclosed_vc }
+    pub fn new(vc: VerifiableCredential, disclosed: VerifiableCredential) -> Self {
+        Self { vc, disclosed }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!(
+            "vc:\n{}vc_proof:\n{}\ndisclosed_vc:\n{}disclosed_vc_proof:\n{}\n",
+            &self
+                .vc
+                .document
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .vc
+                .proof
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .disclosed
+                .document
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>(),
+            &self
+                .disclosed
+                .proof
+                .iter()
+                .map(|q| format!("{} .\n", q.to_string()))
+                .collect::<String>()
+        )
     }
 }
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
     deanon_map: &HashMap<BlankNode, Term>,
-) -> Result<Vec<Quad>, DeriveProofError> {
-    // VCs must not be empty
+) -> Result<Dataset, DeriveProofError> {
+    println!("*** start derive_proof ***");
+
+    for vc in vcs {
+        println!("{}", vc.to_string());
+    }
+    println!("deanon map:\n{:#?}\n", deanon_map);
+
+    // check: VCs must not be empty
     if vcs.is_empty() {
         return Err(DeriveProofError::InvalidVCPairs);
     }
 
     // TODO:
-    // each disclosed VCs must be the derived subset of corresponding VCs via deanon map
+    // check: each disclosed VCs must be the derived subset of corresponding VCs via deanon map
+
+    // TODO:
+    // check: verify VCs
 
     // extract proof values from VC
     let proof_values = vcs
         .iter()
-        .map(|vc| {
-            let v = &vc
+        .map(|vc_with_disclosed| {
+            let v = &vc_with_disclosed
                 .vc
-                .iter()
-                .find(|&q| q.predicate == PROOF_VALUE)
+                .proof
+                .triples_for_predicate(PROOF_VALUE)
+                .next()
                 .ok_or(DeriveProofError::VCWithoutProofValue)?
                 .object;
             match v {
-                Term::Literal(literal) => Ok(literal.value()),
+                TermRef::Literal(literal) => Ok(literal.value()),
                 _ => Err(DeriveProofError::VCWithInvalidProofValue),
             }
         })
@@ -93,50 +145,32 @@ pub fn derive_proof(
     println!("proof values:\n{:#?}\n", proof_values);
 
     // remove `proofValue`s from disclosed VCs
-    let mut disclosed_vc_quads: Vec<Vec<Quad>> =
-        vcs.iter().map(|vc| vc.disclosed_vc.clone()).collect();
-    for disclosed_vc_quad in &mut disclosed_vc_quads {
-        disclosed_vc_quad.retain(|q| q.predicate != PROOF_VALUE)
-    }
-
-    // construct VC graph keys
-    let disclosed_vc_graph_names = vcs
+    let disclosed_vcs: Vec<_> = vcs
         .iter()
-        .map(|vc| {
-            let g = &vc
-                .disclosed_vc
-                .iter()
-                .find(|&q| q.predicate == TYPE && q.object == VERIFIABLE_CREDENTIAL_TYPE.into())
-                .ok_or(DeriveProofError::VCWithoutVCType)?
-                .graph_name;
-            match g {
-                GraphName::BlankNode(n) => Ok(n.as_ref()),
-                _ => Err(DeriveProofError::InvalidVCGraphName),
+        .map(|vc_with_disclosed| {
+            let disclosed_document = &vc_with_disclosed.disclosed.document;
+            let disclosed_proof = &vc_with_disclosed.disclosed.proof;
+            VerifiableCredential {
+                document: Graph::from_iter(disclosed_document),
+                proof: Graph::from_iter(
+                    disclosed_proof
+                        .iter()
+                        .filter(|t| t.predicate != PROOF_VALUE),
+                ),
             }
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
 
     // build VP without proof
     let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let mut vp = build_vp(&disclosed_vc_graph_names, &verification_method)?;
-    vp.extend(disclosed_vc_quads.into_iter().flatten());
-    println!(
-        "vp:\n{}\n",
-        vp.iter()
-            .map(std::string::ToString::to_string)
-            .reduce(|l, r| format!("{}\n{}", l, r))
-            .unwrap_or(String::new())
-    );
+    let vp = build_vp(&disclosed_vcs, &verification_method)?;
+    println!("vp:\n{}\n", vp.to_string());
 
     // canonicalize VP
-    let issued_identifiers_map = issue_quads(&vp)?;
-    let canonicalized_vp = relabel_quads(&vp, &issued_identifiers_map)?;
+    let issued_identifiers_map = issue(&vp)?;
+    let canonicalized_vp = relabel(&vp, &issued_identifiers_map)?;
     println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
-    println!("deanon map:\n{:#?}\n", deanon_map);
-    println!(
-        "canonicalized vp:\n{}\n",
-        serialize(&Dataset::from_iter(&canonicalized_vp))
-    );
+    println!("canonicalized vp:\n{}\n", serialize(&canonicalized_vp));
 
     // construct extended deanonymization map
     let extended_deanon_map: HashMap<_, _> = issued_identifiers_map
@@ -373,70 +407,94 @@ fn deanonymize_term(
 }
 
 fn build_vp(
-    vc_graph_names: &Vec<BlankNodeRef>,
+    vcs: &Vec<VerifiableCredential>,
     verification_method: &NamedNode,
-) -> Result<Vec<Quad>, DeriveProofError> {
+) -> Result<Dataset, DeriveProofError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
     let vp_proof_graph_id = BlankNode::default();
-    let mut vp = vec![
-        Quad::new(
-            vp_id.clone(),
-            TYPE,
-            VERIFIABLE_PRESENTATION_TYPE,
-            GraphName::DefaultGraph,
-        ),
-        Quad::new(
-            vp_id.clone(),
-            PROOF,
-            vp_proof_graph_id.clone(),
-            GraphName::DefaultGraph,
-        ),
-    ];
-    let vcs = vc_graph_names
+    let mut vp = Dataset::default();
+    vp.insert(QuadRef::new(
+        &vp_id,
+        TYPE,
+        VERIFIABLE_PRESENTATION_TYPE,
+        GraphNameRef::DefaultGraph,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_id,
+        PROOF,
+        &vp_proof_graph_id,
+        GraphNameRef::DefaultGraph,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_proof_id,
+        TYPE,
+        DATA_INTEGRITY_PROOF,
+        &vp_proof_graph_id,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_proof_id,
+        CRYPTOSUITE,
+        LiteralRef::new_simple_literal(CRYPTOSUITE_FOR_VP),
+        &vp_proof_graph_id,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_proof_id,
+        PROOF_PURPOSE,
+        ASSERTION_METHOD,
+        &vp_proof_graph_id,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_proof_id,
+        VERIFICATION_METHOD,
+        verification_method,
+        &vp_proof_graph_id,
+    ));
+    vp.insert(QuadRef::new(
+        &vp_proof_id,
+        CREATED,
+        LiteralRef::new_typed_literal(&format!("{:?}", Utc::now()), xsd::DATE_TIME),
+        &vp_proof_graph_id,
+    ));
+
+    let vc_quads = vcs
         .iter()
-        .map(|vc_graph_name| {
-            Ok(Quad::new(
-                vp_id.clone(),
-                VERIFIABLE_CREDENTIAL,
-                *vc_graph_name,
-                GraphName::DefaultGraph,
-            ))
+        .map(|vc| {
+            let vc_graph_name = BlankNode::default();
+            let vc_proof_graph_name = BlankNode::default();
+            let vc_document_id = vc
+                .document
+                .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
+                .ok_or(DeriveProofError::VCWithoutVCType)?;
+            let mut document: Vec<Quad> = vc
+                .document
+                .iter()
+                .map(|t| t.into_owned().in_graph(vc_graph_name.clone()))
+                .collect();
+            document.push(Quad::new(
+                vc_document_id,
+                PROOF,
+                vc_proof_graph_name.clone(),
+                vc_graph_name.clone(),
+            ));
+            let mut proof: Vec<Quad> = vc
+                .proof
+                .iter()
+                .map(|t| t.into_owned().in_graph(vc_proof_graph_name.clone()))
+                .collect();
+            document.append(&mut proof);
+            Ok((vc_graph_name, document))
         })
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
-    let vp_proof = vec![
-        Quad::new(
-            vp_proof_id.clone(),
-            TYPE,
-            DATA_INTEGRITY_PROOF,
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            CRYPTOSUITE,
-            Literal::new_simple_literal(CRYPTOSUITE_FOR_VP),
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            PROOF_PURPOSE,
-            ASSERTION_METHOD,
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id.clone(),
-            VERIFICATION_METHOD,
-            verification_method.clone(),
-            vp_proof_graph_id.clone(),
-        ),
-        Quad::new(
-            vp_proof_id,
-            CREATED,
-            Literal::new_typed_literal(format!("{:?}", Utc::now()), xsd::DATE_TIME),
-            vp_proof_graph_id,
-        ),
-    ];
-    vp.extend(vcs);
-    vp.extend(vp_proof);
+
+    for (vc_graph_name, vc_quad) in vc_quads {
+        vp.insert(QuadRef::new(
+            &vp_id,
+            VERIFIABLE_CREDENTIAL,
+            &vc_graph_name,
+            GraphNameRef::DefaultGraph,
+        ));
+        vp.extend(vc_quad);
+    }
     Ok(vp)
 }

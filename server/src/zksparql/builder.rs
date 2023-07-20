@@ -8,7 +8,8 @@ use super::{
 
 use oxigraph::store::Store;
 use oxrdf::{
-    vocab::rdf::TYPE, BlankNode, GraphName, Literal, NamedNode, Quad, Subject, Term, Variable,
+    vocab::rdf::TYPE, BlankNode, Graph, GraphName, Literal, NamedNode, Quad, Subject, Term, Triple,
+    Variable,
 };
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
@@ -42,6 +43,27 @@ impl From<&VerifiableCredential> for Vec<Quad> {
         out.extend(value.subject.clone());
         out.extend(value.proof.clone());
         out
+    }
+}
+
+impl From<&VerifiableCredential> for super::crypto::VerifiableCredential {
+    fn from(value: &VerifiableCredential) -> Self {
+        let mut document = Graph::from_iter(
+            value
+                .metadata
+                .iter()
+                .map(|q| Into::<Triple>::into(q.clone()))
+                .filter(|q| q.predicate != PROOF),
+        );
+        let subject = Graph::from_iter(
+            value
+                .subject
+                .iter()
+                .map(|q| Into::<Triple>::into(q.clone())),
+        );
+        document.extend(&subject);
+        let proof = Graph::from_iter(value.proof.iter().map(|q| Into::<Triple>::into(q.clone())));
+        Self::new(document, proof)
     }
 }
 
@@ -327,14 +349,14 @@ fn build_disclosed_subject(
 }
 
 pub fn get_verifiable_credential(
-    cred_graph_id: &GraphName,
+    vc_graph_name: &GraphName,
     store: &Store,
 ) -> Result<VerifiableCredential, ZkSparqlError> {
     let metadata = store
-        .quads_for_pattern(None, None, None, Some(cred_graph_id.as_ref()))
+        .quads_for_pattern(None, None, None, Some(vc_graph_name.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let subject_graph_id = match cred_graph_id {
+    let subject_graph_name = match vc_graph_name {
         GraphName::NamedNode(n) => Ok(GraphName::NamedNode(NamedNode::new(format!(
             "{}{}",
             n.as_str(),
@@ -342,12 +364,17 @@ pub fn get_verifiable_credential(
         ))?)),
         _ => Err(ZkSparqlError::FailedGettingVerifiableCredential),
     }?;
-    let subject = store
-        .quads_for_pattern(None, None, None, Some(subject_graph_id.as_ref()))
+    let mut subject = store
+        .quads_for_pattern(None, None, None, Some(subject_graph_name.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
 
+    // remove `.subject` from subject graph name
+    for subject_quad in &mut subject {
+        subject_quad.graph_name = vc_graph_name.clone()
+    }
+
     let mut vc_to_proof_quads = store
-        .quads_for_pattern(None, Some(PROOF), None, Some(cred_graph_id.as_ref()))
+        .quads_for_pattern(None, Some(PROOF), None, Some(vc_graph_name.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let vc_to_proof_quad = match vc_to_proof_quads.pop() {
         Some(v) => {
