@@ -402,14 +402,14 @@ pub fn get_verifiable_credential(
 }
 
 pub fn pseudonymize_metadata_and_proofs(
-    graph_id: &GraphName,
+    vc_graph_name: &GraphName,
     vc: &VerifiableCredential,
     store: &Store,
     nymizer: &mut Pseudonymizer,
 ) -> Result<VerifiableCredential, ZkSparqlError> {
     let get_nym_targets = |predicate, object| {
         store
-            .quads_for_pattern(None, predicate, object, Some(graph_id.as_ref()))
+            .quads_for_pattern(None, predicate, object, Some(vc_graph_name.as_ref()))
             .map(|quad| match quad?.subject {
                 Subject::NamedNode(n) => Ok(n),
                 Subject::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),

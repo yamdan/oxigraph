@@ -13,7 +13,7 @@ use crate::{
             deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,
             pseudonymize_metadata_and_proofs,
         },
-        crypto::{derive_proof, VcWithDisclosed},
+        crypto::{derive_proof, DeriveProofError, VcWithDisclosed},
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
@@ -154,10 +154,10 @@ fn evaluate_zksparql_prove(
     // 6. get associated VCs
     let vcs = disclosed_subjects
         .keys()
-        .map(|cred_graph_id| {
+        .map(|vc_graph_name| {
             Ok((
-                cred_graph_id.clone(),
-                get_verifiable_credential(cred_graph_id, store)?,
+                vc_graph_name.clone(),
+                get_verifiable_credential(vc_graph_name, store)?,
             ))
         })
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
@@ -165,18 +165,18 @@ fn evaluate_zksparql_prove(
     // 7. pseudonymize VCs
     let mut disclosed_vcs = vcs
         .iter()
-        .map(|(cred_graph_id, vc)| {
+        .map(|(vc_graph_name, vc)| {
             Ok((
-                cred_graph_id.clone(),
-                pseudonymize_metadata_and_proofs(cred_graph_id, vc, store, &mut nymizer)?,
+                vc_graph_name.clone(),
+                pseudonymize_metadata_and_proofs(vc_graph_name, vc, store, &mut nymizer)?,
             ))
         })
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
 
     // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
-    for (graph_name, quads) in disclosed_subjects {
+    for (vc_graph_name, quads) in disclosed_subjects {
         disclosed_vcs
-            .entry(graph_name)
+            .entry(vc_graph_name)
             .and_modify(|vc| vc.subject = quads.into_iter().collect());
     }
 
@@ -189,11 +189,15 @@ fn evaluate_zksparql_prove(
     let deskolemized_deanon_map = deskolemize_deanon_map(&deanon_map)?;
 
     // 11. build VP
-    let vc_with_disclosed: Vec<VcWithDisclosed> = deskolemized_vcs
+    let vc_with_disclosed = deskolemized_vcs
         .iter()
-        .zip(deskolemized_disclosed_vcs.iter())
-        .map(|((_, vc), (_, disclosed_vc))| VcWithDisclosed::new(vc.into(), disclosed_vc.into()))
-        .collect();
+        .map(|(vc_graph_name, vc)| {
+            let disclosed_vc = deskolemized_disclosed_vcs.get(vc_graph_name).ok_or(
+                DeriveProofError::InternalError("VC and Disclosed VCs are unmatched".to_string()),
+            )?;
+            Ok(VcWithDisclosed::new(vc.into(), disclosed_vc.into()))
+        })
+        .collect::<Result<Vec<_>, ZkSparqlError>>()?;
     let vp = derive_proof(&vc_with_disclosed, &deskolemized_deanon_map)?;
 
     // 12. add VP to the solution
