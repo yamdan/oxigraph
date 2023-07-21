@@ -2,7 +2,7 @@ use super::{
     context::{
         ASSERTION_METHOD, CREATED, CRYPTOSUITE, DATA_INTEGRITY_PROOF, FILTER, PROOF, PROOF_PURPOSE,
         PROOF_VALUE, VERIFIABLE_CREDENTIAL, VERIFIABLE_CREDENTIAL_TYPE,
-        VERIFIABLE_PRESENTATION_TYPE, VERIFICATION_METHOD,
+        VERIFIABLE_PRESENTATION_TYPE,
     },
     CRYPTOSUITE_FOR_VP,
 };
@@ -10,12 +10,13 @@ use super::{
 use chrono::offset::Utc;
 use oxiri::IriParseError;
 use oxrdf::{
+    dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
-    BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphNameRef, LiteralRef, NamedNode,
-    NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphNameRef, LiteralRef, NamedNodeRef, Quad,
+    QuadRef, Subject, Term, TermRef,
 };
 use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // TODO: fix name
 #[derive(Debug)]
@@ -128,42 +129,41 @@ pub fn derive_proof(
     // extract proof values from VC
     let proof_values = vcs
         .iter()
-        .map(|vc_with_disclosed| {
-            let v = &vc_with_disclosed
-                .vc
-                .proof
-                .triples_for_predicate(PROOF_VALUE)
-                .next()
-                .ok_or(DeriveProofError::VCWithoutProofValue)?
-                .object;
-            match v {
-                TermRef::Literal(literal) => Ok(literal.value()),
-                _ => Err(DeriveProofError::VCWithInvalidProofValue),
-            }
-        })
+        .map(
+            |VcWithDisclosed {
+                 vc: VerifiableCredential { proof, .. },
+                 ..
+             }| {
+                match proof
+                    .triples_for_predicate(PROOF_VALUE)
+                    .next()
+                    .ok_or(DeriveProofError::VCWithoutProofValue)?
+                    .object
+                {
+                    TermRef::Literal(literal) => Ok(literal.value()),
+                    _ => Err(DeriveProofError::VCWithInvalidProofValue),
+                }
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     println!("proof values:\n{:#?}\n", proof_values);
 
     // remove `proofValue`s from disclosed VCs
-    let disclosed_vcs: Vec<_> = vcs
+    let disclosed_vcs = vcs
         .iter()
-        .map(|vc_with_disclosed| {
-            let disclosed_document = &vc_with_disclosed.disclosed.document;
-            let disclosed_proof = &vc_with_disclosed.disclosed.proof;
-            VerifiableCredential {
-                document: Graph::from_iter(disclosed_document),
-                proof: Graph::from_iter(
-                    disclosed_proof
-                        .iter()
-                        .filter(|t| t.predicate != PROOF_VALUE),
-                ),
-            }
-        })
+        .map(
+            |VcWithDisclosed {
+                 disclosed: VerifiableCredential { document, proof },
+                 ..
+             }| VerifiableCredential {
+                document: Graph::from_iter(document),
+                proof: Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
+            },
+        )
         .collect();
 
-    // build VP without proof
-    let verification_method = NamedNode::new_unchecked("https://example.org/holder#key1"); // TODO: replace with the real holder's public key
-    let vp = build_vp(&disclosed_vcs, &verification_method)?;
+    // build VP (without proof yet)
+    let vp = build_vp(&disclosed_vcs)?;
     println!("vp:\n{}\n", vp.to_string());
 
     // canonicalize VP
@@ -173,7 +173,7 @@ pub fn derive_proof(
     println!("canonicalized vp:\n{}\n", serialize(&canonicalized_vp));
 
     // construct extended deanonymization map
-    let extended_deanon_map: HashMap<_, _> = issued_identifiers_map
+    let extended_deanon_map = issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
             let bnode = BlankNode::new(bnid)?;
@@ -186,105 +186,28 @@ pub fn derive_proof(
         .collect::<Result<_, DeriveProofError>>()?;
     println!("extended deanon map:\n{:?}\n", extended_deanon_map);
 
-    // split canonicalized VP into graphs and sort them
-    let mut vp_graphs: BTreeMap<String, Vec<Triple>> = BTreeMap::new();
-    for quad in &canonicalized_vp {
-        vp_graphs
-            .entry(quad.graph_name.to_string())
-            .or_default()
-            .push(Triple::new(
-                quad.subject.clone(),
-                quad.predicate.clone(),
-                quad.object.clone(),
-            ));
-    }
-    for (_, triples) in &mut vp_graphs {
-        triples.sort_by_cached_key(|t| t.to_string());
-    }
-    println!("vp graphs:");
-    for g in vp_graphs.keys() {
-        println!(
-            "{}:\n{}\n",
-            g,
-            vp_graphs
-                .get(g)
-                .unwrap()
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
+    // decompose canonicalized VP into graphs
+    let VpGraphs {
+        metadata: vp_metadata,
+        proof: vp_proof,
+        filters: filters_graph,
+        vcs: vc_graphs,
+        vc_proofs: vc_proof_graphs,
+    } = decompose_vp(&canonicalized_vp)?;
 
-    // process VP metadata (default graph)
-    let vp_metadata = vp_graphs
-        .remove("DEFAULT")
-        .ok_or(DeriveProofError::InternalError(
-            "VP graphs must have default graph".to_owned(),
-        ))?;
-    println!(
-        "VP metadata:\n{}\n",
-        vp_metadata
-            .iter()
-            .map(|t| format!("{} .\n", t.to_string()))
-            .reduce(|l, r| format!("{}{}", l, r))
-            .unwrap()
-    );
-
-    // extract VC graphs
-    let mut vc_graphs = remove_graphs(&mut vp_graphs, &vp_metadata, VERIFIABLE_CREDENTIAL)?;
-    println!("VC graphs:");
-    for vc_graph in &vc_graphs {
-        println!(
-            "{}",
-            vc_graph
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
-    // extract VC proof graphs
-    let mut vc_proof_graphs = vc_graphs
+    // convert VC graphs and VC proof graphs into `Vec<Triple>`s
+    let mut vc_graphs = vc_graphs
         .iter()
-        .map(|vc| remove_graph(&mut vp_graphs, vc, PROOF))
-        .collect::<Result<Vec<_>, _>>()?;
-    println!("VC proof graphs:");
-    for vc_proof_graph in &vc_proof_graphs {
-        println!(
-            "{}",
-            vc_proof_graph
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
-    // extract VP proof graph
-    let vp_proof_graph = remove_graph(&mut vp_graphs, &vp_metadata, PROOF)?;
-    println!(
-        "VP proof graph:\n{}\n",
-        vp_proof_graph
-            .iter()
-            .map(|t| format!("{} .\n", t.to_string()))
-            .reduce(|l, r| format!("{}{}", l, r))
-            .unwrap()
-    );
-
-    // extract filter graphs if any
-    let filter_graphs = remove_graphs(&mut vp_graphs, &vp_proof_graph, FILTER)?;
-    println!("filter graphs:\n{:#?}\n", filter_graphs);
-
-    // check that `vp_graphs` is empty
-    if !vp_graphs.is_empty() {
-        return Err(DeriveProofError::InvalidVP);
-    }
+        .map(|(_, g)| g.iter().map(|t| t.into_owned()).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let mut vc_proof_graphs = vc_proof_graphs
+        .iter()
+        .map(|(_, g)| g.iter().map(|t| t.into_owned()).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
 
     // deanonymize each VC graphs, keeping their orders
     for vc_graph in &mut vc_graphs {
-        for triple in vc_graph {
+        for triple in vc_graph.into_iter() {
             deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
             deanonymize_term(&extended_deanon_map, &mut triple.object)?;
         }
@@ -332,31 +255,34 @@ pub fn derive_proof(
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
-fn remove_graphs(
-    vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
-    source: &Vec<Triple>,
+fn remove_graphs<'a>(
+    vp_graphs: &mut BTreeMap<String, GraphView<'a>>,
+    source: &GraphView,
     link: NamedNodeRef,
-) -> Result<Vec<Vec<Triple>>, DeriveProofError> {
+) -> Result<BTreeMap<String, GraphView<'a>>, DeriveProofError> {
     source
         .iter()
         .filter(|triple| triple.predicate == link)
         .map(|triple| {
-            Ok(vp_graphs
-                .remove(&triple.object.to_string())
-                .ok_or(DeriveProofError::InvalidVP)?)
+            Ok((
+                triple.object.to_string(),
+                vp_graphs
+                    .remove(&triple.object.to_string())
+                    .ok_or(DeriveProofError::InvalidVP)?,
+            ))
         })
-        .collect::<Result<Vec<_>, DeriveProofError>>()
+        .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()
 }
 
 // function to remove from the VP the single graph that is reachable from `source` via `link`
-fn remove_graph(
-    vp_graphs: &mut BTreeMap<String, Vec<Triple>>,
-    source: &Vec<Triple>,
+fn remove_graph<'a>(
+    vp_graphs: &mut BTreeMap<String, GraphView<'a>>,
+    source: &GraphView,
     link: NamedNodeRef,
-) -> Result<Vec<Triple>, DeriveProofError> {
+) -> Result<GraphView<'a>, DeriveProofError> {
     let mut graphs = remove_graphs(vp_graphs, source, link)?;
-    match graphs.pop() {
-        Some(graph) => {
+    match graphs.pop_first() {
+        Some((_, graph)) => {
             if graphs.is_empty() {
                 Ok(graph)
             } else {
@@ -406,13 +332,11 @@ fn deanonymize_term(
     Ok(())
 }
 
-fn build_vp(
-    vcs: &Vec<VerifiableCredential>,
-    verification_method: &NamedNode,
-) -> Result<Dataset, DeriveProofError> {
+fn build_vp(vcs: &Vec<VerifiableCredential>) -> Result<Dataset, DeriveProofError> {
     let vp_id = BlankNode::default();
     let vp_proof_id = BlankNode::default();
     let vp_proof_graph_id = BlankNode::default();
+
     let mut vp = Dataset::default();
     vp.insert(QuadRef::new(
         &vp_id,
@@ -446,44 +370,41 @@ fn build_vp(
     ));
     vp.insert(QuadRef::new(
         &vp_proof_id,
-        VERIFICATION_METHOD,
-        verification_method,
-        &vp_proof_graph_id,
-    ));
-    vp.insert(QuadRef::new(
-        &vp_proof_id,
         CREATED,
         LiteralRef::new_typed_literal(&format!("{:?}", Utc::now()), xsd::DATE_TIME),
         &vp_proof_graph_id,
     ));
 
+    // convert VC graphs (triples) into VC dataset (quads)
     let vc_quads = vcs
         .iter()
-        .map(|vc| {
-            let vc_graph_name = BlankNode::default();
-            let vc_proof_graph_name = BlankNode::default();
-            let vc_document_id = vc
-                .document
+        .map(|VerifiableCredential { document, proof }| {
+            let document_graph_name = BlankNode::default();
+            let proof_graph_name = BlankNode::default();
+            let document_id = document
                 .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
                 .ok_or(DeriveProofError::VCWithoutVCType)?;
-            let mut document: Vec<Quad> = vc
-                .document
+
+            let mut document_quads: Vec<Quad> = document
                 .iter()
-                .map(|t| t.into_owned().in_graph(vc_graph_name.clone()))
+                .map(|t| t.into_owned().in_graph(document_graph_name.clone()))
                 .collect();
-            document.push(Quad::new(
-                vc_document_id,
+
+            // add `proof` link from VC document to VC proof graph
+            document_quads.push(Quad::new(
+                document_id,
                 PROOF,
-                vc_proof_graph_name.clone(),
-                vc_graph_name.clone(),
+                proof_graph_name.clone(),
+                document_graph_name.clone(),
             ));
-            let mut proof: Vec<Quad> = vc
-                .proof
+
+            let mut proof_quads: Vec<Quad> = proof
                 .iter()
-                .map(|t| t.into_owned().in_graph(vc_proof_graph_name.clone()))
+                .map(|t| t.into_owned().in_graph(proof_graph_name.clone()))
                 .collect();
-            document.append(&mut proof);
-            Ok((vc_graph_name, document))
+            document_quads.append(&mut proof_quads);
+
+            Ok((document_graph_name, document_quads))
         })
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
 
@@ -497,4 +418,81 @@ fn build_vp(
         vp.extend(vc_quad);
     }
     Ok(vp)
+}
+
+struct VpGraphs<'a> {
+    metadata: GraphView<'a>,
+    proof: GraphView<'a>,
+    filters: BTreeMap<String, GraphView<'a>>,
+    vcs: BTreeMap<String, GraphView<'a>>,
+    vc_proofs: BTreeMap<String, GraphView<'a>>,
+}
+
+fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
+    let vp_graph_names = vp
+        .iter()
+        .map(|QuadRef { graph_name, .. }| graph_name)
+        .collect::<HashSet<_>>();
+
+    // Note: here we use `String` instead of `GraphName` as a key of BTreeMap because `GraphName` does not support `Ord`
+    let mut vp_graphs = vp_graph_names
+        .into_iter()
+        .map(|vp_graph_name| (vp_graph_name.to_string(), vp.graph(vp_graph_name)))
+        .collect::<BTreeMap<_, _>>();
+    println!("vp graphs:");
+    for g in vp_graphs.keys() {
+        println!("{}:\n{}\n", g, vp_graphs.get(g).unwrap());
+    }
+
+    // process VP metadata (default graph)
+    let metadata = vp_graphs
+        .remove("DEFAULT")
+        .ok_or(DeriveProofError::InternalError(
+            "VP graphs must have default graph".to_owned(),
+        ))?;
+    println!("VP metadata:\n{}\n", metadata);
+
+    // extract VP proof graph
+    let proof = remove_graph(&mut vp_graphs, &metadata, PROOF)?;
+    println!("VP proof graph:\n{}\n", proof);
+
+    // extract filter graphs if any
+    let filters = remove_graphs(&mut vp_graphs, &proof, FILTER)?;
+    println!("filter graphs:");
+    for (_, filter_graph) in &filters {
+        println!("{}", filter_graph);
+    }
+
+    // extract VC graphs
+    let vcs = remove_graphs(&mut vp_graphs, &metadata, VERIFIABLE_CREDENTIAL)?;
+    println!("VC graphs:");
+    for (_, vc) in &vcs {
+        println!("{}", vc);
+    }
+
+    // extract VC proof graphs
+    let vc_proofs = vcs
+        .iter()
+        .map(|(vc_graph_name, vc)| {
+            let vc_proof = remove_graph(&mut vp_graphs, vc, PROOF)?;
+            Ok((vc_graph_name.clone(), vc_proof))
+        })
+        .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+    println!("VC proof graphs:");
+    for (_, vc_proof) in &vc_proofs {
+        println!("{}", vc_proof);
+    }
+
+    // check if `vp_graphs` is empty
+    if !vp_graphs.is_empty() {
+        return Err(DeriveProofError::InvalidVP);
+    }
+
+    Ok(VpGraphs {
+        metadata,
+        proof,
+        filters,
+        vcs,
+        vc_proofs,
+    })
 }
