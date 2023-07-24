@@ -269,8 +269,10 @@ pub fn derive_proof(
         )
         .collect();
 
+    // TODO: get c14ned original VCs
+
     // build VP (without proof yet)
-    let (vp, doc_to_vc_idx) = build_vp(&disclosed_vcs)?;
+    let (vp, vc_graph_names) = build_vp(&disclosed_vcs)?;
     println!("vp:\n{}\n", vp.to_string());
 
     // canonicalize VP
@@ -321,7 +323,7 @@ pub fn derive_proof(
                     "invalid VC graph name".to_string(),
                 )),
             }?;
-            let index = doc_to_vc_idx
+            let index = vc_graph_names
                 .iter()
                 .position(|v| v == vc_graph_name)
                 .ok_or(DeriveProofError::InternalError(
@@ -468,14 +470,14 @@ fn build_vp(
     ));
 
     // convert VC graphs (triples) into VC dataset (quads)
-    let mut document_graph_name_to_vc_index = Vec::with_capacity(disclosed_vcs.len());
+    let mut vc_graph_names = Vec::with_capacity(disclosed_vcs.len());
     let vc_quads = disclosed_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
             let document_graph_name = BlankNode::default();
             let proof_graph_name = BlankNode::default();
 
-            document_graph_name_to_vc_index.push(document_graph_name.clone());
+            vc_graph_names.push(document_graph_name.clone());
 
             let document_id = document
                 .subject_for_predicate_object(TYPE, VERIFIABLE_CREDENTIAL_TYPE)
@@ -513,7 +515,7 @@ fn build_vp(
         ));
         vp.extend(vc_quad);
     }
-    Ok((vp, document_graph_name_to_vc_index))
+    Ok((vp, vc_graph_names))
 }
 
 fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
@@ -589,11 +591,36 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
 
 fn gen_index_map(
     original_vc_graphs: OrderedVCGraphs,
-    vc_graphs: OrderedVCGraphViews,
+    disclosed_vc_graphs: OrderedVCGraphViews,
     extended_deanon_map: &HashMap<BlankNode, Term>,
 ) -> Result<(), DeriveProofError> {
+    let original_vc_graphs = original_vc_graphs
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+
+    println!("original VC graphs:");
+    for VerifiableCredentialTriples { document, proof } in &original_vc_graphs {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+
     // convert VC graphs and VC proof graphs into `Vec<Triple>`s
-    let mut vc_graphs = vc_graphs
+    let mut vc_graphs = disclosed_vc_graphs
         .into_iter()
         .map(|(_, view)| view.into())
         .collect::<Vec<VerifiableCredentialTriples>>();
@@ -630,31 +657,6 @@ fn gen_index_map(
     }
     println!("deanonymized VC graphs:");
     for VerifiableCredentialTriples { document, proof } in &vc_graphs {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
-    let original_vc_graphs = original_vc_graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-
-    println!("original VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &original_vc_graphs {
         println!(
             "document:\n{}",
             document
