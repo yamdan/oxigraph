@@ -16,7 +16,7 @@ use oxrdf::{
     QuadRef, Subject, Term, TermRef, Triple,
 };
 use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 // TODO: fix name
 #[derive(Debug)]
@@ -135,6 +135,43 @@ impl VcWithDisclosed {
                 .map(|q| format!("{} .\n", q.to_string()))
                 .collect::<String>()
         )
+    }
+}
+
+/// `oxrdf::triple::GraphNameRef` with string-based ordering
+#[derive(Eq, PartialEq, Clone)]
+struct OrderedGraphNameRef<'a>(GraphNameRef<'a>);
+impl Ord for OrderedGraphNameRef<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.to_string().cmp(&other.0.to_string())
+    }
+}
+impl PartialOrd for OrderedGraphNameRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.to_string().partial_cmp(&other.0.to_string())
+    }
+}
+impl<'a> From<OrderedGraphNameRef<'a>> for GraphNameRef<'a> {
+    fn from(value: OrderedGraphNameRef<'a>) -> Self {
+        value.0
+    }
+}
+impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
+    type Error = DeriveProofError;
+
+    fn try_from(value: TermRef<'a>) -> Result<Self, Self::Error> {
+        match value {
+            TermRef::NamedNode(n) => Ok(OrderedGraphNameRef(n.into())),
+            TermRef::BlankNode(n) => Ok(OrderedGraphNameRef(n.into())),
+            _ => Err(DeriveProofError::InternalError(
+                "invalid graph name: graph name must not be literal or triple".to_string(),
+            )),
+        }
+    }
+}
+impl std::fmt::Display for OrderedGraphNameRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -297,8 +334,8 @@ pub fn derive_proof(
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
 fn remove_graphs<'a>(
-    vp_graphs: &mut BTreeMap<String, GraphView<'a>>,
-    source: &GraphView,
+    vp_graphs: &mut BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    source: &GraphView<'a>,
     link: NamedNodeRef,
 ) -> Result<BTreeMap<String, GraphView<'a>>, DeriveProofError> {
     source
@@ -308,7 +345,7 @@ fn remove_graphs<'a>(
             Ok((
                 triple.object.to_string(),
                 vp_graphs
-                    .remove(&triple.object.to_string())
+                    .remove(&triple.object.try_into()?)
                     .ok_or(DeriveProofError::InvalidVP)?,
             ))
         })
@@ -317,8 +354,8 @@ fn remove_graphs<'a>(
 
 // function to remove from the VP the single graph that is reachable from `source` via `link`
 fn remove_graph<'a>(
-    vp_graphs: &mut BTreeMap<String, GraphView<'a>>,
-    source: &GraphView,
+    vp_graphs: &mut BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    source: &GraphView<'a>,
     link: NamedNodeRef,
 ) -> Result<GraphView<'a>, DeriveProofError> {
     let mut graphs = remove_graphs(vp_graphs, source, link)?;
@@ -469,24 +506,23 @@ struct VpGraphs<'a> {
 }
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
-    let vp_graph_names = vp
+    let vp_graph_name_set = vp
         .iter()
-        .map(|QuadRef { graph_name, .. }| graph_name)
-        .collect::<HashSet<_>>();
+        .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef(graph_name))
+        .collect::<BTreeSet<_>>();
 
-    // Note: here we use `String` instead of `GraphName` as a key of BTreeMap because `GraphName` does not support `Ord`
-    let mut vp_graphs = vp_graph_names
+    let mut vp_graphs = vp_graph_name_set
         .into_iter()
-        .map(|vp_graph_name| (vp_graph_name.to_string(), vp.graph(vp_graph_name)))
+        .map(|vp_graph_name| (vp_graph_name.clone(), vp.graph(vp_graph_name)))
         .collect::<BTreeMap<_, _>>();
     println!("vp graphs:");
     for g in vp_graphs.keys() {
         println!("{}:\n{}\n", g, vp_graphs.get(g).unwrap());
     }
 
-    // process VP metadata (default graph)
+    // extract VP metadata (default graph)
     let metadata = vp_graphs
-        .remove("DEFAULT")
+        .remove(&OrderedGraphNameRef(GraphNameRef::DefaultGraph))
         .ok_or(DeriveProofError::InternalError(
             "VP graphs must have default graph".to_owned(),
         ))?;
@@ -510,8 +546,6 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
         println!("{}", vc);
     }
 
-    // TODO: filter out PROOF
-
     // extract VC proof graphs
     let vcs = vcs
         .into_iter()
@@ -524,6 +558,8 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
     for (_, vc) in &vcs {
         println!("{}", vc.proof);
     }
+
+    // TODO: filter out PROOF
 
     // check if `vp_graphs` is empty
     if !vp_graphs.is_empty() {
