@@ -84,6 +84,7 @@ impl From<VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
         let mut document = view
             .document
             .iter()
+            .filter(|t| t.predicate != PROOF) // filter out `proof`
             .map(|t| t.into_owned())
             .collect::<Vec<_>>();
         document.sort_by_cached_key(|t| t.to_string());
@@ -204,7 +205,7 @@ pub fn derive_proof(
     // TODO:
     // check: verify VCs
 
-    // extract proof values from VC
+    // extract `proofValue`s from VC
     let proof_values = vcs
         .iter()
         .map(
@@ -558,8 +559,6 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
     for (_, vc) in &vcs {
         println!("{}", vc.proof);
     }
-
-    // TODO: filter out PROOF
 
     // check if `vp_graphs` is empty
     if !vp_graphs.is_empty() {
