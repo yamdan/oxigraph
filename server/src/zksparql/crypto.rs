@@ -138,6 +138,13 @@ impl VcWithDisclosed {
     }
 }
 
+struct VpGraphs<'a> {
+    metadata: GraphView<'a>,
+    proof: GraphView<'a>,
+    filters: BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    vcs: BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>,
+}
+
 /// `oxrdf::triple::GraphNameRef` with string-based ordering
 #[derive(Eq, PartialEq, Clone)]
 struct OrderedGraphNameRef<'a>(GraphNameRef<'a>);
@@ -496,13 +503,6 @@ fn build_vp(vcs: &Vec<VerifiableCredential>) -> Result<Dataset, DeriveProofError
         vp.extend(vc_quad);
     }
     Ok(vp)
-}
-
-struct VpGraphs<'a> {
-    metadata: GraphView<'a>,
-    proof: GraphView<'a>,
-    filters: BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
-    vcs: BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>,
 }
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
