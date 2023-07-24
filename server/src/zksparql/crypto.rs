@@ -13,7 +13,7 @@ use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
     BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphNameRef, LiteralRef, NamedNodeRef, Quad,
-    QuadRef, Subject, Term, TermRef,
+    QuadRef, Subject, Term, TermRef, Triple,
 };
 use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -59,6 +59,40 @@ pub struct VerifiableCredential {
 
 impl VerifiableCredential {
     pub fn new(document: Graph, proof: Graph) -> Self {
+        Self { document, proof }
+    }
+}
+
+pub struct VerifiableCredentialView<'a> {
+    document: GraphView<'a>,
+    proof: GraphView<'a>,
+}
+
+impl<'a> VerifiableCredentialView<'a> {
+    pub fn new(document: GraphView<'a>, proof: GraphView<'a>) -> Self {
+        Self { document, proof }
+    }
+}
+
+pub struct VerifiableCredentialTriples {
+    document: Vec<Triple>,
+    proof: Vec<Triple>,
+}
+
+impl From<VerifiableCredentialView<'_>> for VerifiableCredentialTriples {
+    fn from(view: VerifiableCredentialView) -> Self {
+        let mut document = view
+            .document
+            .iter()
+            .map(|t| t.into_owned())
+            .collect::<Vec<_>>();
+        document.sort_by_cached_key(|t| t.to_string());
+        let mut proof = view
+            .proof
+            .iter()
+            .map(|t| t.into_owned())
+            .collect::<Vec<_>>();
+        proof.sort_by_cached_key(|t| t.to_string());
         Self { document, proof }
     }
 }
@@ -192,31 +226,26 @@ pub fn derive_proof(
         proof: vp_proof,
         filters: filters_graph,
         vcs: vc_graphs,
-        vc_proofs: vc_proof_graphs,
     } = decompose_vp(&canonicalized_vp)?;
 
     // convert VC graphs and VC proof graphs into `Vec<Triple>`s
     let mut vc_graphs = vc_graphs
-        .iter()
-        .map(|(_, g)| g.iter().map(|t| t.into_owned()).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let mut vc_proof_graphs = vc_proof_graphs
-        .iter()
-        .map(|(_, g)| g.iter().map(|t| t.into_owned()).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-
-    // deanonymize each VC graphs, keeping their orders
-    for vc_graph in &mut vc_graphs {
-        for triple in vc_graph.into_iter() {
-            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
-            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
-        }
-    }
-    println!("deanonymized VC graphs:");
-    for vc_graph in &vc_graphs {
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    println!("VC graphs (before deanonymized):");
+    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
         println!(
-            "{}",
-            vc_graph
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
                 .iter()
                 .map(|t| format!("{} .\n", t.to_string()))
                 .reduce(|l, r| format!("{}{}", l, r))
@@ -224,18 +253,30 @@ pub fn derive_proof(
         );
     }
 
-    // deanonymize each VC proof graphs, keeping their orders
-    for vc_proof_graph in &mut vc_proof_graphs {
-        for triple in vc_proof_graph {
+    // deanonymize each VC graphs, keeping their orders
+    for VerifiableCredentialTriples { document, proof } in &mut vc_graphs {
+        for triple in document.into_iter() {
+            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
+            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
+        }
+        for triple in proof.into_iter() {
             deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
             deanonymize_term(&extended_deanon_map, &mut triple.object)?;
         }
     }
-    println!("deanonymized VC proof graphs:");
-    for vc_proof_graph in &vc_proof_graphs {
+    println!("deanonymized VC graphs:");
+    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
         println!(
-            "{}",
-            vc_proof_graph
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
                 .iter()
                 .map(|t| format!("{} .\n", t.to_string()))
                 .reduce(|l, r| format!("{}{}", l, r))
@@ -424,8 +465,7 @@ struct VpGraphs<'a> {
     metadata: GraphView<'a>,
     proof: GraphView<'a>,
     filters: BTreeMap<String, GraphView<'a>>,
-    vcs: BTreeMap<String, GraphView<'a>>,
-    vc_proofs: BTreeMap<String, GraphView<'a>>,
+    vcs: BTreeMap<String, VerifiableCredentialView<'a>>,
 }
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
@@ -470,17 +510,19 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
         println!("{}", vc);
     }
 
+    // TODO: filter out PROOF
+
     // extract VC proof graphs
-    let vc_proofs = vcs
-        .iter()
+    let vcs = vcs
+        .into_iter()
         .map(|(vc_graph_name, vc)| {
-            let vc_proof = remove_graph(&mut vp_graphs, vc, PROOF)?;
-            Ok((vc_graph_name.clone(), vc_proof))
+            let vc_proof = remove_graph(&mut vp_graphs, &vc, PROOF)?;
+            Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
         })
         .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
     println!("VC proof graphs:");
-    for (_, vc_proof) in &vc_proofs {
-        println!("{}", vc_proof);
+    for (_, vc) in &vcs {
+        println!("{}", vc.proof);
     }
 
     // check if `vp_graphs` is empty
@@ -493,6 +535,5 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
         proof,
         filters,
         vcs,
-        vc_proofs,
     })
 }
