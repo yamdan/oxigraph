@@ -142,8 +142,8 @@ impl VcWithDisclosed {
 struct VpGraphs<'a> {
     metadata: GraphView<'a>,
     proof: GraphView<'a>,
-    filters: BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
-    vcs: BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>,
+    filters: OrderedGraphs<'a>,
+    vcs: OrderedVCGraphs<'a>,
 }
 
 /// `oxrdf::triple::GraphNameRef` with string-based ordering
@@ -182,6 +182,9 @@ impl std::fmt::Display for OrderedGraphNameRef<'_> {
         self.0.fmt(f)
     }
 }
+
+type OrderedGraphs<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
+type OrderedVCGraphs<'a> = BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
@@ -273,65 +276,10 @@ pub fn derive_proof(
         vcs: vc_graphs,
     } = decompose_vp(&canonicalized_vp)?;
 
-    // convert VC graphs and VC proof graphs into `Vec<Triple>`s
-    let mut vc_graphs = vc_graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-    println!("VC graphs (before deanonymized):");
-    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
+    // TODO: original VCs
 
-    // deanonymize each VC graphs, keeping their orders
-    for VerifiableCredentialTriples { document, proof } in &mut vc_graphs {
-        for triple in document.into_iter() {
-            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
-            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
-        }
-        for triple in proof.into_iter() {
-            deanonymize_subject(&extended_deanon_map, &mut triple.subject)?;
-            deanonymize_term(&extended_deanon_map, &mut triple.object)?;
-        }
-    }
-    println!("deanonymized VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
-    // TODO: calculate index mapping
-
-    // TODO: calculate reveal index
+    // generate index map
+    let index_map = gen_index_map(vc_graphs, &extended_deanon_map);
 
     // TODO: calculate meta statements
 
@@ -342,10 +290,10 @@ pub fn derive_proof(
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
 fn remove_graphs<'a>(
-    vp_graphs: &mut BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    vp_graphs: &mut OrderedGraphs<'a>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
-) -> Result<BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>, DeriveProofError> {
+) -> Result<OrderedGraphs<'a>, DeriveProofError> {
     source
         .iter()
         .filter(|triple| triple.predicate == link)
@@ -357,12 +305,12 @@ fn remove_graphs<'a>(
                     .ok_or(DeriveProofError::InvalidVP)?,
             ))
         })
-        .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()
+        .collect::<Result<OrderedGraphs, DeriveProofError>>()
 }
 
 // function to remove from the VP the single graph that is reachable from `source` via `link`
 fn remove_graph<'a>(
-    vp_graphs: &mut BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    vp_graphs: &mut OrderedGraphs<'a>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
 ) -> Result<GraphView<'a>, DeriveProofError> {
@@ -506,16 +454,20 @@ fn build_vp(vcs: &Vec<VerifiableCredential>) -> Result<Dataset, DeriveProofError
     Ok(vp)
 }
 
-fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
-    let vp_graph_name_set = vp
+fn dataset_into_graphs(dataset: &Dataset) -> OrderedGraphs {
+    let graph_name_set = dataset
         .iter()
         .map(|QuadRef { graph_name, .. }| OrderedGraphNameRef(graph_name))
         .collect::<BTreeSet<_>>();
 
-    let mut vp_graphs = vp_graph_name_set
+    graph_name_set
         .into_iter()
-        .map(|vp_graph_name| (vp_graph_name.clone(), vp.graph(vp_graph_name)))
-        .collect::<BTreeMap<_, _>>();
+        .map(|graph_name| (graph_name.clone(), dataset.graph(graph_name)))
+        .collect()
+}
+
+fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
+    let mut vp_graphs = dataset_into_graphs(vp);
     println!("vp graphs:");
     for g in vp_graphs.keys() {
         println!("{}:\n{}\n", g, vp_graphs.get(g).unwrap());
@@ -554,7 +506,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
             let vc_proof = remove_graph(&mut vp_graphs, &vc, PROOF)?;
             Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
         })
-        .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+        .collect::<Result<OrderedVCGraphs, DeriveProofError>>()?;
     println!("VC proof graphs:");
     for (_, vc) in &vcs {
         println!("{}", vc.proof);
@@ -571,4 +523,71 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
         filters,
         vcs,
     })
+}
+
+fn gen_index_map(
+    vc_graphs: OrderedVCGraphs,
+    extended_deanon_map: &HashMap<BlankNode, Term>,
+) -> Result<(), DeriveProofError> {
+    // convert VC graphs and VC proof graphs into `Vec<Triple>`s
+    let mut vc_graphs = vc_graphs
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    println!("VC graphs (before deanonymized):");
+    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+
+    // deanonymize each VC graphs, keeping their orders
+    for VerifiableCredentialTriples { document, proof } in &mut vc_graphs {
+        for triple in document.into_iter() {
+            deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
+            deanonymize_term(extended_deanon_map, &mut triple.object)?;
+        }
+        for triple in proof.into_iter() {
+            deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
+            deanonymize_term(extended_deanon_map, &mut triple.object)?;
+        }
+    }
+    println!("deanonymized VC graphs:");
+    for VerifiableCredentialTriples { document, proof } in &vc_graphs {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+
+    // TODO: calculate index mapping
+
+    // TODO: calculate reveal index
+
+    todo!()
 }
