@@ -12,8 +12,8 @@ use oxiri::IriParseError;
 use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
-    BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphNameRef, LiteralRef,
-    NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphName, GraphNameRef,
+    LiteralRef, NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -117,6 +117,31 @@ impl From<&VerifiableCredential> for VerifiableCredentialTriples {
     }
 }
 
+pub struct CanonicalVerifiableCredential {
+    document: Vec<Triple>,
+    document_issued_identifiers_map: HashMap<String, String>,
+    proof: Vec<Triple>,
+    proof_issued_identifiers_map: HashMap<String, String>,
+}
+
+impl CanonicalVerifiableCredential {
+    pub fn new(
+        mut document: Vec<Triple>,
+        document_issued_identifiers_map: HashMap<String, String>,
+        mut proof: Vec<Triple>,
+        proof_issued_identifiers_map: HashMap<String, String>,
+    ) -> Self {
+        document.sort_by_cached_key(|t| t.to_string());
+        proof.sort_by_cached_key(|t| t.to_string());
+        Self {
+            document,
+            document_issued_identifiers_map,
+            proof,
+            proof_issued_identifiers_map,
+        }
+    }
+}
+
 pub struct VcWithDisclosed {
     vc: VerifiableCredential,
     disclosed: VerifiableCredential,
@@ -209,7 +234,8 @@ impl std::fmt::Display for OrderedGraphNameRef<'_> {
 
 type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVCGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
-type OrderedVCGraphs<'a> = BTreeMap<OrderedGraphNameRef<'a>, &'a VerifiableCredential>;
+type OrderedCanonicalVCGraphs<'a> =
+    BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredential>;
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
@@ -269,7 +295,74 @@ pub fn derive_proof(
         )
         .collect();
 
-    // TODO: get c14ned original VCs
+    // get canonicalized original VCs
+    let canonicalized_original_vcs =
+        vcs.iter()
+            .map(
+                |VcWithDisclosed {
+                     vc: VerifiableCredential { document, proof },
+                     ..
+                 }| {
+                    let document_dataset = Dataset::from_iter(document.iter().map(|t| {
+                        Quad::new(t.subject, t.predicate, t.object, GraphName::DefaultGraph)
+                    }));
+                    let proof_dataset = Dataset::from_iter(proof.iter().map(|t| {
+                        Quad::new(t.subject, t.predicate, t.object, GraphName::DefaultGraph)
+                    }));
+                    let document_issued_identifiers_map = issue(&document_dataset)?;
+                    let proof_issued_identifiers_map = issue(&proof_dataset)?;
+                    let canonicalized_document =
+                        relabel(&document_dataset, &document_issued_identifiers_map)?;
+                    let canonicalized_proof =
+                        relabel(&proof_dataset, &proof_issued_identifiers_map)?;
+                    Ok(CanonicalVerifiableCredential::new(
+                        canonicalized_document
+                            .iter()
+                            .map(|q| q.into_owned().into())
+                            .collect(),
+                        document_issued_identifiers_map,
+                        canonicalized_proof
+                            .into_iter()
+                            .map(|q| q.into_owned().into())
+                            .collect(),
+                        proof_issued_identifiers_map,
+                    ))
+                },
+            )
+            .collect::<Result<Vec<_>, DeriveProofError>>()?;
+    println!("canonicalized original VC graphs:");
+    for CanonicalVerifiableCredential {
+        document,
+        document_issued_identifiers_map,
+        proof,
+        proof_issued_identifiers_map,
+    } in &canonicalized_original_vcs
+    {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "document issued identifiers map:\n{:#?}\n",
+            document_issued_identifiers_map
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof issued identifiers map:\n{:#?}\n",
+            proof_issued_identifiers_map
+        );
+    }
 
     // build VP (without proof yet)
     let (vp, vc_graph_names) = build_vp(&disclosed_vcs)?;
@@ -282,7 +375,7 @@ pub fn derive_proof(
     println!("canonicalized vp:\n{}\n", serialize(&canonicalized_vp));
 
     // construct extended deanonymization map
-    let extended_deanon_map = issued_identifiers_map
+    let mut extended_deanon_map = issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
             let bnode = BlankNode::new(bnid)?;
@@ -304,40 +397,41 @@ pub fn derive_proof(
     } = decompose_vp(&canonicalized_vp)?;
 
     // associate original VCs with c14n blank node identifiers of disclosed VCs
-    let original_vcs = disclosed_vc_graphs
-        .keys()
-        .map(|k| {
-            let vc_graph_name_c14n: &GraphNameRef = k.into();
-            let vc_graph_name: &BlankNodeRef = match vc_graph_name_c14n {
-                GraphNameRef::BlankNode(n) => Ok(n),
-                _ => Err(DeriveProofError::InternalError(
-                    "invalid VC graph name".to_string(),
-                )),
-            }?;
-            let vc_graph_name = extended_deanon_map.get(&(*vc_graph_name).into()).ok_or(
-                DeriveProofError::InternalError("invalid VC graph name".to_string()),
-            )?;
-            let vc_graph_name = match vc_graph_name {
-                Term::BlankNode(n) => Ok(n),
-                _ => Err(DeriveProofError::InternalError(
-                    "invalid VC graph name".to_string(),
-                )),
-            }?;
-            let index = vc_graph_names
-                .iter()
-                .position(|v| v == vc_graph_name)
-                .ok_or(DeriveProofError::InternalError(
-                    "invalid VC index".to_string(),
-                ))?;
-            let vc = vcs.get(index).ok_or(DeriveProofError::InternalError(
-                "invalid VC index".to_string(),
-            ))?;
-            Ok((k.clone(), &vc.vc))
-        })
-        .collect::<Result<OrderedVCGraphs, DeriveProofError>>()?;
+    let original_vcs =
+        disclosed_vc_graphs
+            .keys()
+            .map(|k| {
+                let vc_graph_name_c14n: &GraphNameRef = k.into();
+                let vc_graph_name: &BlankNodeRef = match vc_graph_name_c14n {
+                    GraphNameRef::BlankNode(n) => Ok(n),
+                    _ => Err(DeriveProofError::InternalError(
+                        "invalid VC graph name".to_string(),
+                    )),
+                }?;
+                let vc_graph_name = extended_deanon_map.get(&(*vc_graph_name).into()).ok_or(
+                    DeriveProofError::InternalError("invalid VC graph name".to_string()),
+                )?;
+                let vc_graph_name = match vc_graph_name {
+                    Term::BlankNode(n) => Ok(n),
+                    _ => Err(DeriveProofError::InternalError(
+                        "invalid VC graph name".to_string(),
+                    )),
+                }?;
+                let index = vc_graph_names
+                    .iter()
+                    .position(|v| v == vc_graph_name)
+                    .ok_or(DeriveProofError::InternalError(
+                        "invalid VC index".to_string(),
+                    ))?;
+                let vc = canonicalized_original_vcs.get(index).ok_or(
+                    DeriveProofError::InternalError("invalid VC index".to_string()),
+                )?;
+                Ok((k.clone(), vc))
+            })
+            .collect::<Result<OrderedCanonicalVCGraphs, DeriveProofError>>()?;
 
     // generate index map
-    let index_map = gen_index_map(original_vcs, disclosed_vc_graphs, &extended_deanon_map);
+    let index_map = gen_index_map(original_vcs, disclosed_vc_graphs, &mut extended_deanon_map);
 
     // TODO: calculate meta statements
 
@@ -590,17 +684,18 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
 }
 
 fn gen_index_map(
-    original_vc_graphs: OrderedVCGraphs,
+    original_vc_graphs: OrderedCanonicalVCGraphs,
     disclosed_vc_graphs: OrderedVCGraphViews,
-    extended_deanon_map: &HashMap<BlankNode, Term>,
+    extended_deanon_map: &mut HashMap<BlankNode, Term>,
 ) -> Result<(), DeriveProofError> {
-    let original_vc_graphs = original_vc_graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-
-    println!("original VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &original_vc_graphs {
+    println!("canonicalized original VC graphs:");
+    for (
+        _,
+        CanonicalVerifiableCredential {
+            document, proof, ..
+        },
+    ) in &original_vc_graphs
+    {
         println!(
             "document:\n{}",
             document
@@ -619,6 +714,7 @@ fn gen_index_map(
         );
     }
 
+    // TODO: compose extended deanonymization map with issued identifiers map for original VC graphs
     // convert VC graphs and VC proof graphs into `Vec<Triple>`s
     let mut vc_graphs = disclosed_vc_graphs
         .into_iter()
