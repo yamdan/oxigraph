@@ -337,13 +337,13 @@ fn remove_graphs<'a>(
     vp_graphs: &mut BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
     source: &GraphView<'a>,
     link: NamedNodeRef,
-) -> Result<BTreeMap<String, GraphView<'a>>, DeriveProofError> {
+) -> Result<BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>, DeriveProofError> {
     source
         .iter()
         .filter(|triple| triple.predicate == link)
         .map(|triple| {
             Ok((
-                triple.object.to_string(),
+                triple.object.try_into()?,
                 vp_graphs
                     .remove(&triple.object.try_into()?)
                     .ok_or(DeriveProofError::InvalidVP)?,
@@ -501,8 +501,8 @@ fn build_vp(vcs: &Vec<VerifiableCredential>) -> Result<Dataset, DeriveProofError
 struct VpGraphs<'a> {
     metadata: GraphView<'a>,
     proof: GraphView<'a>,
-    filters: BTreeMap<String, GraphView<'a>>,
-    vcs: BTreeMap<String, VerifiableCredentialView<'a>>,
+    filters: BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>,
+    vcs: BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>,
 }
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
