@@ -2,12 +2,12 @@
 ## subject
 <did:example:john> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc0.subject> .
 <did:example:john> <http://schema.org/name> "John Smith" <urn:bnid:vc0.subject> .
-<did:example:john> <http://example.org/vocab/isPatientOf> <urn:bnid:c14n0> <urn:bnid:vc0.subject> .
-<urn:bnid:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc0.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/lotNumber> "0000001" <urn:bnid:vc0.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc0.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> <urn:bnid:vc0.subject> .
+<did:example:john> <http://example.org/vocab/isPatientOf> <urn:bnid:vc0.c14n0> <urn:bnid:vc0.subject> .
+<urn:bnid:vc0.c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc0.subject> .
+<urn:bnid:vc0.c14n0> <http://example.org/vocab/lotNumber> "0000001" <urn:bnid:vc0.subject> .
+<urn:bnid:vc0.c14n0> <http://example.org/vocab/vaccinationDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0.subject> .
+<urn:bnid:vc0.c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc0.subject> .
+<urn:bnid:vc0.c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> <urn:bnid:vc0.subject> .
 ## metadata
 <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:bnid:vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> <urn:bnid:vc0> .
@@ -16,12 +16,12 @@
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0> .
 <http://example.org/vcred/00> <https://w3id.org/security#proof> <urn:bnid:vc0.proof> <urn:bnid:vc0> .
 ## proof
-<urn:bnid:c14n1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc0.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc0.proof> .
-<urn:bnid:c14n1> <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc0.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> <urn:bnid:vc0.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#proofValue> "mA9oePddXRZK1dTCt9iJOAPd9WabAW0rThUIP6RoLbUdPG1L5pPnRUG9BBpnFuzAZk9X1b6jApMKYEdL4Dn7/FYWZeJckHxW9vz+UVH1S7IfQDGkcW3zuR3eEVPpOot/KY1akOy29JVcl2rkkS5UVw==" <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> <urn:bnid:vc0.proof> .
+<urn:bnid:vc0.c14n1> <https://w3id.org/security#proofValue> "mA9oePddXRZK1dTCt9iJOAPd9WabAW0rThUIP6RoLbUdPG1L5pPnRUG9BBpnFuzAZk9X1b6jApMKYEdL4Dn7/FYWZeJckHxW9vz+UVH1S7IfQDGkcW3zuR3eEVPpOot/KY1akOy29JVcl2rkkS5UVw==" <urn:bnid:vc0.proof> .
 
 # <urn:bnid:vc1>
 ## subject
@@ -40,22 +40,22 @@
 <http://example.org/vcred/01> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1> .
 <http://example.org/vcred/01> <https://w3id.org/security#proof> <urn:bnid:vc1.proof> <urn:bnid:vc1> .
 ## proof
-<urn:bnid:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc1.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc1.proof> .
-<urn:bnid:c14n0> <http://purl.org/dc/terms/created> "2023-02-03T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc1.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> <urn:bnid:vc1.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <http://purl.org/dc/terms/created> "2023-02-03T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> <urn:bnid:vc1.proof> .
+<urn:bnid:vc1:c14n0> <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" <urn:bnid:vc1.proof> .
 
 # <urn:bnid:vc2>
 ## subject
 <did:example:jane> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/Person> <urn:bnid:vc2.subject> .
 <did:example:jane> <http://schema.org/name> "Jane Smith" <urn:bnid:vc2.subject> .
-<did:example:jane> <http://example.org/vocab/isPatientOf> <urn:bnid:c14n0> <urn:bnid:vc2.subject> .
-<urn:bnid:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc2.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/lotNumber> "1234567" <urn:bnid:vc2.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/vaccinationDate> "2022-05-05T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2.subject> .
-<urn:bnid:c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc2.subject> .
+<did:example:jane> <http://example.org/vocab/isPatientOf> <urn:bnid:vc2:c14n0> <urn:bnid:vc2.subject> .
+<urn:bnid:vc2:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/vocab/Vaccination> <urn:bnid:vc2.subject> .
+<urn:bnid:vc2:c14n0> <http://example.org/vocab/lotNumber> "1234567" <urn:bnid:vc2.subject> .
+<urn:bnid:vc2:c14n0> <http://example.org/vocab/vaccinationDate> "2022-05-05T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2.subject> .
+<urn:bnid:vc2:c14n0> <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <urn:bnid:vc2.subject> .
 ## metadata
 <http://example.org/vcred/02> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <urn:bnid:vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:jane> <urn:bnid:vc2> .
@@ -64,12 +64,12 @@
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2> .
 <http://example.org/vcred/02> <https://w3id.org/security#proof> <urn:bnid:vc2.proof> <urn:bnid:vc2> .
 ## proof
-<urn:bnid:c14n1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc2.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc2.proof> .
-<urn:bnid:c14n1> <http://purl.org/dc/terms/created> "2023-05-05T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc2.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> <urn:bnid:vc2.proof> .
-<urn:bnid:c14n1> <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <http://purl.org/dc/terms/created> "2023-05-05T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> <urn:bnid:vc2.proof> .
+<urn:bnid:vc2:c14n1> <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" <urn:bnid:vc2.proof> .
 
 # <urn:bnid:vc3>
 ## subject
@@ -85,12 +85,12 @@
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc3> .
 <http://example.org/vicred/a> <https://w3id.org/security#proof> <urn:bnid:vc3.proof> <urn:bnid:vc3> .
 ## proof
-<urn:bnid:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc3.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc3.proof> .
-<urn:bnid:c14n0> <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc3.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc3.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> <urn:bnid:vc3.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> <urn:bnid:vc3.proof> .
+<urn:bnid:vc3:c14n0> <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" <urn:bnid:vc3.proof> .
 
 # <urn:bnid:vc4>
 ## subject
@@ -106,9 +106,9 @@
 <http://example.org/vicred/b> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc4> .
 <http://example.org/vicred/b> <https://w3id.org/security#proof> <urn:bnid:vc4.proof> <urn:bnid:vc4> .
 ## proof
-<urn:bnid:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc4.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc4.proof> .
-<urn:bnid:c14n0> <http://purl.org/dc/terms/created> "2023-03-03T11:22:33Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc4.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc4.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> <urn:bnid:vc4.proof> .
-<urn:bnid:c14n0> <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <http://purl.org/dc/terms/created> "2023-03-03T11:22:33Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> <urn:bnid:vc4.proof> .
+<urn:bnid:vc4:c14n0> <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" <urn:bnid:vc4.proof> .
