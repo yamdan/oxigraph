@@ -31,6 +31,7 @@ pub enum DeriveProofError {
     BlankNodeIdParseError(BlankNodeIdParseError),
     DeAnonymizationError,
     InvalidVP,
+    BlankNodeCollisionError,
     InternalError(String),
 }
 
@@ -114,6 +115,16 @@ impl From<&VerifiableCredential> for VerifiableCredentialTriples {
             .iter()
             .map(|t| t.into_owned())
             .collect::<Vec<_>>();
+        proof.sort_by_cached_key(|t| t.to_string());
+        Self { document, proof }
+    }
+}
+
+impl From<&CanonicalVerifiableCredential> for VerifiableCredentialTriples {
+    fn from(view: &CanonicalVerifiableCredential) -> Self {
+        let mut document = view.document.iter().map(|t| t.clone()).collect::<Vec<_>>();
+        document.sort_by_cached_key(|t| t.to_string());
+        let mut proof = view.proof.iter().map(|t| t.clone()).collect::<Vec<_>>();
         proof.sort_by_cached_key(|t| t.to_string());
         Self { document, proof }
     }
@@ -324,13 +335,41 @@ pub fn derive_proof(
     println!("vp:\n{}\n", vp.to_string());
 
     // canonicalize VP
-    let issued_identifiers_map = issue(&vp)?;
-    let canonicalized_vp = relabel(&vp, &issued_identifiers_map)?;
-    println!("issued identifiers map:\n{:#?}\n", issued_identifiers_map);
+    let c14n_map_for_disclosed = issue(&vp)?;
+    let canonicalized_vp = relabel(&vp, &c14n_map_for_disclosed)?;
+    println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
     println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
 
+    // compose extended deanonymization map with issued identifiers map for original VC graphs
+    let mut c14n_map_for_original_vc = HashMap::<String, String>::new();
+    for CanonicalVerifiableCredential {
+        document_issued_identifiers_map,
+        proof_issued_identifiers_map,
+        ..
+    } in &c14n_original_vcs
+    {
+        for (k, v) in document_issued_identifiers_map {
+            if c14n_map_for_original_vc.contains_key(k) {
+                return Err(DeriveProofError::BlankNodeCollisionError);
+            } else {
+                c14n_map_for_original_vc.insert(k.to_string(), v.to_string());
+            }
+        }
+        for (k, v) in proof_issued_identifiers_map {
+            if c14n_map_for_original_vc.contains_key(k) {
+                return Err(DeriveProofError::BlankNodeCollisionError);
+            } else {
+                c14n_map_for_original_vc.insert(k.to_string(), v.to_string());
+            }
+        }
+    }
+
     // construct extended deanonymization map
-    let extended_deanon_map = extend_deanon_map(deanon_map, &issued_identifiers_map)?;
+    let extended_deanon_map = extend_deanon_map(
+        deanon_map,
+        &c14n_map_for_disclosed,
+        &c14n_map_for_original_vc,
+    )?;
     println!("extended deanon map:");
     for (f, t) in &extended_deanon_map {
         println!("{}: {}", f.to_string(), t.to_string());
@@ -495,6 +534,7 @@ fn canonicalize_original_vcs(
             );
             let document_issued_identifiers_map = issue(&document_dataset)?;
             let proof_issued_identifiers_map = issue(&proof_dataset)?;
+
             let canonicalized_document =
                 relabel(&document_dataset, &document_issued_identifiers_map)?;
             let canonicalized_proof = relabel(&proof_dataset, &proof_issued_identifiers_map)?;
@@ -623,11 +663,16 @@ fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
 fn extend_deanon_map(
     deanon_map: &HashMap<BlankNode, Term>,
     issued_identifiers_map: &HashMap<String, String>,
+    c14n_map_for_original_vc: &HashMap<String, String>,
 ) -> Result<HashMap<BlankNode, Term>, DeriveProofError> {
     issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
-            let bnode = BlankNode::new(bnid)?;
+            let mapped_bnid = match c14n_map_for_original_vc.get(bnid) {
+                Some(v) => v,
+                None => bnid,
+            };
+            let bnode = BlankNode::new(mapped_bnid)?;
             if let Some(v) = deanon_map.get(&bnode) {
                 Ok((BlankNode::new(cnid)?, v.clone()))
             } else {
@@ -728,14 +773,13 @@ fn gen_index_map(
     c14n_disclosed_vc_graphs: OrderedVCGraphViews,
     extended_deanon_map: &HashMap<BlankNode, Term>,
 ) -> Result<(), DeriveProofError> {
-    println!("canonicalized original VC graphs:");
-    for (
-        _,
-        CanonicalVerifiableCredential {
-            document, proof, ..
-        },
-    ) in &c14n_original_vc_graphs
-    {
+    // convert original VC graphs and VC proof graphs into `Vec<Triple>`s
+    let c14n_original_vc_triples = c14n_original_vc_graphs
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    println!("canonicalized original VC graphs (sorted):");
+    for VerifiableCredentialTriples { document, proof } in &c14n_original_vc_triples {
         println!(
             "document:\n{}",
             document
@@ -754,8 +798,7 @@ fn gen_index_map(
         );
     }
 
-    // TODO: compose extended deanonymization map with issued identifiers map for original VC graphs
-    // convert VC graphs and VC proof graphs into `Vec<Triple>`s
+    // convert disclosed VC graphs and VC proof graphs into `Vec<Triple>`s
     let mut c14n_disclosed_vc_triples = c14n_disclosed_vc_graphs
         .into_iter()
         .map(|(_, view)| view.into())
@@ -780,7 +823,7 @@ fn gen_index_map(
         );
     }
 
-    // deanonymize each VC triples, keeping their orders
+    // deanonymize each disclosed VC triples, keeping their orders
     for VerifiableCredentialTriples { document, proof } in &mut c14n_disclosed_vc_triples {
         for triple in document.into_iter() {
             deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
