@@ -293,10 +293,6 @@ pub fn derive_proof(
         .map(|VcWithDisclosed { vc, .. }| vc)
         .collect::<Vec<_>>();
 
-    // get `proofValue`s from original VCs
-    let proof_values = get_proof_values(&original_vcs)?;
-    println!("proof values:\n{:#?}\n", proof_values);
-
     // canonicalize original VCs
     let c14n_original_vcs = canonicalize_original_vcs(&original_vcs)?;
     println!("canonicalized original VC graphs:");
@@ -421,12 +417,15 @@ pub fn derive_proof(
     )?;
 
     // generate index map
-    let index_map = gen_index_map(
+    let index_map_with_proof_values = gen_index_map_and_proof_values(
         c14n_original_vc_graphs,
         c14n_disclosed_vc_graphs,
         &extended_deanon_map,
     )?;
-    println!("index_map:\n{:#?}\n", index_map);
+    println!(
+        "index_map_with_proof_values:\n{:#?}\n",
+        index_map_with_proof_values
+    );
 
     // TODO: calculate meta statements
 
@@ -511,25 +510,6 @@ fn deanonymize_term(
         Term::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
-}
-
-fn get_proof_values<'a>(
-    original_vcs: &'a Vec<&'a VerifiableCredential>,
-) -> Result<Vec<&'a str>, DeriveProofError> {
-    original_vcs
-        .iter()
-        .map(|VerifiableCredential { proof, .. }| {
-            match proof
-                .triples_for_predicate(PROOF_VALUE)
-                .next()
-                .ok_or(DeriveProofError::VCWithoutProofValue)?
-                .object
-            {
-                TermRef::Literal(literal) => Ok(literal.value()),
-                _ => Err(DeriveProofError::VCWithInvalidProofValue),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()
 }
 
 fn canonicalize_original_vcs(
@@ -784,11 +764,11 @@ fn reassociate_vc_with_disclosed<'a>(
         .collect::<Result<_, DeriveProofError>>()
 }
 
-fn gen_index_map(
+fn gen_index_map_and_proof_values(
     c14n_original_vc_graphs: OrderedCanonicalVCGraphs,
     c14n_disclosed_vc_graphs: OrderedVCGraphViews,
     extended_deanon_map: &HashMap<BlankNode, Term>,
-) -> Result<Vec<StatementIndexMap>, DeriveProofError> {
+) -> Result<Vec<(StatementIndexMap, String)>, DeriveProofError> {
     // assert the keys of two VC graphs are equivalent
     if !c14n_original_vc_graphs
         .keys()
@@ -915,12 +895,24 @@ fn gen_index_map(
                     .collect::<Result<Vec<_>, _>>()?;
                 let document_len = original_document.len();
                 let proof_len = original_proof.len();
-                Ok(StatementIndexMap {
-                    document_map,
-                    document_len,
-                    proof_map,
-                    proof_len,
-                })
+                let proof_value = match &original_proof
+                    .iter()
+                    .find(|&t| t.predicate == PROOF_VALUE)
+                    .ok_or(DeriveProofError::VCWithoutProofValue)?
+                    .object
+                {
+                    Term::Literal(literal) => Ok(literal.value()),
+                    _ => Err(DeriveProofError::VCWithInvalidProofValue),
+                }?;
+                Ok((
+                    StatementIndexMap {
+                        document_map,
+                        document_len,
+                        proof_map,
+                        proof_len,
+                    },
+                    proof_value.to_string(),
+                ))
             },
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
