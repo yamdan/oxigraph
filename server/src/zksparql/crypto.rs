@@ -32,10 +32,17 @@ pub enum DeriveProofError {
     DeAnonymizationError,
     InvalidVP,
     BlankNodeCollisionError,
+    DisclosedVCIsNotSubsetOfOriginalVC,
     InternalError(String),
 }
 
 // TODO: implement Error trait
+// impl Error for DeriveProofError {}
+// impl std::fmt::Display for DeriveProofError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         todo!()
+//     }
+// }
 
 impl From<IriParseError> for DeriveProofError {
     fn from(e: IriParseError) -> Self {
@@ -245,6 +252,14 @@ impl std::fmt::Display for OrderedGraphNameRef<'_> {
     }
 }
 
+#[derive(Debug)]
+struct StatementIndexMap {
+    document_map: Vec<usize>,
+    document_len: usize,
+    proof_map: Vec<usize>,
+    proof_len: usize,
+}
+
 type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVCGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
 type OrderedCanonicalVCGraphs<'a> =
@@ -410,7 +425,8 @@ pub fn derive_proof(
         c14n_original_vc_graphs,
         c14n_disclosed_vc_graphs,
         &extended_deanon_map,
-    );
+    )?;
+    println!("index_map:\n{:#?}\n", index_map);
 
     // TODO: calculate meta statements
 
@@ -772,7 +788,17 @@ fn gen_index_map(
     c14n_original_vc_graphs: OrderedCanonicalVCGraphs,
     c14n_disclosed_vc_graphs: OrderedVCGraphViews,
     extended_deanon_map: &HashMap<BlankNode, Term>,
-) -> Result<(), DeriveProofError> {
+) -> Result<Vec<StatementIndexMap>, DeriveProofError> {
+    // assert the keys of two VC graphs are equivalent
+    if !c14n_original_vc_graphs
+        .keys()
+        .eq(c14n_disclosed_vc_graphs.keys())
+    {
+        return Err(DeriveProofError::InternalError(
+            "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
+        ));
+    }
+
     // convert original VC graphs and VC proof graphs into `Vec<Triple>`s
     let c14n_original_vc_triples = c14n_original_vc_graphs
         .into_iter()
@@ -854,9 +880,50 @@ fn gen_index_map(
         );
     }
 
-    // TODO: calculate index mapping
+    // calculate index mapping
+    let index_map = c14n_disclosed_vc_triples
+        .iter()
+        .zip(c14n_original_vc_triples)
+        .map(
+            |(
+                VerifiableCredentialTriples {
+                    document: disclosed_document,
+                    proof: disclosed_proof,
+                },
+                VerifiableCredentialTriples {
+                    document: original_document,
+                    proof: original_proof,
+                },
+            )| {
+                let document_map = disclosed_document
+                    .iter()
+                    .map(|disclosed_triple| {
+                        original_document
+                            .iter()
+                            .position(|original_triple| *disclosed_triple == *original_triple)
+                            .ok_or(DeriveProofError::DisclosedVCIsNotSubsetOfOriginalVC)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let proof_map = disclosed_proof
+                    .iter()
+                    .map(|disclosed_triple| {
+                        original_proof
+                            .iter()
+                            .position(|original_triple| *disclosed_triple == *original_triple)
+                            .ok_or(DeriveProofError::DisclosedVCIsNotSubsetOfOriginalVC)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let document_len = original_document.len();
+                let proof_len = original_proof.len();
+                Ok(StatementIndexMap {
+                    document_map,
+                    document_len,
+                    proof_map,
+                    proof_len,
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, DeriveProofError>>()?;
 
-    // TODO: calculate reveal index
-
-    todo!()
+    Ok(index_map)
 }
