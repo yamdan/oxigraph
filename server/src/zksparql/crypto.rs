@@ -132,8 +132,8 @@ impl From<&VerifiableCredential> for VerifiableCredentialTriples {
     }
 }
 
-impl From<&CanonicalVerifiableCredential> for VerifiableCredentialTriples {
-    fn from(view: &CanonicalVerifiableCredential) -> Self {
+impl From<&CanonicalVerifiableCredentialTriples> for VerifiableCredentialTriples {
+    fn from(view: &CanonicalVerifiableCredentialTriples) -> Self {
         let mut document = view.document.iter().map(|t| t.clone()).collect::<Vec<_>>();
         document.sort_by_cached_key(|t| t.to_string());
         let mut proof = view.proof.iter().map(|t| t.clone()).collect::<Vec<_>>();
@@ -142,14 +142,14 @@ impl From<&CanonicalVerifiableCredential> for VerifiableCredentialTriples {
     }
 }
 
-pub struct CanonicalVerifiableCredential {
+pub struct CanonicalVerifiableCredentialTriples {
     document: Vec<Triple>,
     document_issued_identifiers_map: HashMap<String, String>,
     proof: Vec<Triple>,
     proof_issued_identifiers_map: HashMap<String, String>,
 }
 
-impl CanonicalVerifiableCredential {
+impl CanonicalVerifiableCredentialTriples {
     pub fn new(
         mut document: Vec<Triple>,
         document_issued_identifiers_map: HashMap<String, String>,
@@ -212,7 +212,7 @@ struct VpGraphs<'a> {
     metadata: GraphView<'a>,
     proof: GraphView<'a>,
     filters: OrderedGraphViews<'a>,
-    disclosed_vcs: OrderedVCGraphViews<'a>,
+    disclosed_vcs: OrderedVerifiableCredentialGraphViews<'a>,
 }
 
 /// `oxrdf::triple::GraphNameRef` with string-based ordering
@@ -266,9 +266,10 @@ struct StatementIndexMap {
 }
 
 type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
-type OrderedVCGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
-type OrderedCanonicalVCGraphs<'a> =
-    BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredential>;
+type OrderedVerifiableCredentialGraphViews<'a> =
+    BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
+type OrderedCanonicalVerifiableCredentialTriples<'a> =
+    BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>;
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
@@ -358,7 +359,7 @@ pub fn derive_proof(
 
     // compose extended deanonymization map with issued identifiers map for original VC graphs
     let mut c14n_map_for_original_vc = HashMap::<String, String>::new();
-    for CanonicalVerifiableCredential {
+    for CanonicalVerifiableCredentialTriples {
         document_issued_identifiers_map,
         proof_issued_identifiers_map,
         ..
@@ -414,15 +415,16 @@ pub fn derive_proof(
     }
 
     // associate original VCs with canonicalized graph names of disclosed VCs
-    let c14n_original_vc_graphs: OrderedCanonicalVCGraphs = reassociate_vc_with_disclosed(
-        &c14n_original_vcs,
-        &c14n_disclosed_vc_graphs,
-        &extended_deanon_map,
-        &vc_graph_names,
-    )?;
+    let c14n_original_vc_triples: OrderedCanonicalVerifiableCredentialTriples =
+        reassociate_vc_with_disclosed(
+            &c14n_original_vcs,
+            &c14n_disclosed_vc_graphs,
+            &extended_deanon_map,
+            &vc_graph_names,
+        )?;
 
     // assert the keys of two VC graphs are equivalent
-    if !c14n_original_vc_graphs
+    if !c14n_original_vc_triples
         .keys()
         .eq(c14n_disclosed_vc_graphs.keys())
     {
@@ -432,37 +434,10 @@ pub fn derive_proof(
     }
 
     // convert graphs to triples
-    let c14n_original_vc_triples = graph_to_triples(c14n_original_vc_graphs);
-    let c14n_disclosed_vc_triples = graph_to_triples(c14n_disclosed_vc_graphs);
-
-    // generate index map
-    let index_map_with_proof_values = gen_index_map_and_proof_values(
-        &c14n_original_vc_triples,
-        &c14n_disclosed_vc_triples,
-        &extended_deanon_map,
-    )?;
-    println!(
-        "index_map_with_proof_values:\n{:#?}\n",
-        index_map_with_proof_values
-    );
-
-    // TODO: calculate meta statements
-
-    // TODO: derive proof value
-
-    Ok(canonicalized_vp)
-}
-
-// convert original VC graphs and VC proof graphs into `Vec<Triple>`s
-fn graph_to_triples(
-    graphs: BTreeMap<OrderedGraphNameRef, impl Into<VerifiableCredentialTriples>>,
-) -> Vec<VerifiableCredentialTriples> {
-    let triples = graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
+    let c14n_original_vc_triples_vec = graph_to_triples(c14n_original_vc_triples);
+    let c14n_disclosed_vc_triples_vec = graph_to_triples(c14n_disclosed_vc_graphs);
     println!("canonicalized original VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &triples {
+    for VerifiableCredentialTriples { document, proof } in &c14n_original_vc_triples_vec {
         println!(
             "document:\n{}",
             document
@@ -480,7 +455,47 @@ fn graph_to_triples(
                 .unwrap()
         );
     }
-    triples
+    println!("canonicalized disclosed VC graphs (sorted):");
+    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples_vec {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+
+    // generate index map
+    let index_map_with_proof_values = gen_index_map_and_proof_values(
+        &c14n_original_vc_triples_vec,
+        &c14n_disclosed_vc_triples_vec,
+        &extended_deanon_map,
+    )?;
+    println!(
+        "index_map_with_proof_values:\n{:#?}\n",
+        index_map_with_proof_values
+    );
+
+    // derive proof value
+    let derived_proof_value = derive_proof_value(
+        c14n_original_vc_triples_vec,
+        c14n_disclosed_vc_triples_vec,
+        index_map_with_proof_values,
+    )?;
+
+    // TODO: add derived proof value to VP
+
+    Ok(canonicalized_vp)
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
@@ -563,7 +578,7 @@ fn deanonymize_term(
 
 fn canonicalize_original_vcs(
     original_vcs: &Vec<&VerifiableCredential>,
-) -> Result<Vec<CanonicalVerifiableCredential>, DeriveProofError> {
+) -> Result<Vec<CanonicalVerifiableCredentialTriples>, DeriveProofError> {
     original_vcs
         .iter()
         .map(|VerifiableCredential { document, proof }| {
@@ -583,7 +598,7 @@ fn canonicalize_original_vcs(
             let canonicalized_document =
                 relabel(&document_dataset, &document_issued_identifiers_map)?;
             let canonicalized_proof = relabel(&proof_dataset, &proof_issued_identifiers_map)?;
-            Ok(CanonicalVerifiableCredential::new(
+            Ok(CanonicalVerifiableCredentialTriples::new(
                 canonicalized_document
                     .iter()
                     .map(|q| q.into_owned().into())
@@ -757,7 +772,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
             let vc_proof = remove_graph(&mut vp_graphs, &vc, PROOF)?;
             Ok((vc_graph_name, VerifiableCredentialView::new(vc, vc_proof)))
         })
-        .collect::<Result<OrderedVCGraphViews, DeriveProofError>>()?;
+        .collect::<Result<OrderedVerifiableCredentialGraphViews, DeriveProofError>>()?;
 
     // check if `vp_graphs` is empty
     if !vp_graphs.is_empty() {
@@ -773,11 +788,11 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
 }
 
 fn reassociate_vc_with_disclosed<'a>(
-    c14n_original_vcs: &'a Vec<CanonicalVerifiableCredential>,
-    c14n_disclosed_vc_graphs: &OrderedVCGraphViews<'a>,
+    c14n_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
+    c14n_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
     extended_deanon_map: &'a HashMap<BlankNode, Term>,
     vc_graph_names: &Vec<BlankNode>,
-) -> Result<OrderedCanonicalVCGraphs<'a>, DeriveProofError> {
+) -> Result<OrderedCanonicalVerifiableCredentialTriples<'a>, DeriveProofError> {
     c14n_disclosed_vc_graphs
         .keys()
         .map(|k| {
@@ -811,6 +826,16 @@ fn reassociate_vc_with_disclosed<'a>(
             Ok((k.clone(), vc))
         })
         .collect::<Result<_, DeriveProofError>>()
+}
+
+// convert original VC graphs and VC proof graphs into `Vec<Triple>`s
+fn graph_to_triples(
+    graphs: BTreeMap<OrderedGraphNameRef, impl Into<VerifiableCredentialTriples>>,
+) -> Vec<VerifiableCredentialTriples> {
+    graphs
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>()
 }
 
 fn gen_index_map_and_proof_values(
@@ -909,4 +934,20 @@ fn gen_index_map_and_proof_values(
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
 
     Ok(index_map)
+}
+
+fn derive_proof_value(
+    c14n_original_vc_triples: Vec<VerifiableCredentialTriples>,
+    c14n_disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
+    index_map_with_proof_values: Vec<(StatementIndexMap, String)>,
+) -> Result<String, DeriveProofError> {
+    todo!()
+
+    // TODO: extract signature parameters and issuer public keys
+
+    // TODO: identify revealed messages and unrevealed messages
+
+    // TODO: identify equivalent witnesses
+
+    // TODO: generate proofs
 }
