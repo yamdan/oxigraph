@@ -15,6 +15,10 @@ use oxrdf::{
     BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphName, GraphNameRef,
     LiteralRef, NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
+use proof_system::{
+    statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
+    witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
+};
 use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -84,6 +88,7 @@ impl<'a> VerifiableCredentialView<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct VerifiableCredentialTriples {
     document: Vec<Triple>,
     proof: Vec<Triple>,
@@ -416,10 +421,24 @@ pub fn derive_proof(
         &vc_graph_names,
     )?;
 
+    // assert the keys of two VC graphs are equivalent
+    if !c14n_original_vc_graphs
+        .keys()
+        .eq(c14n_disclosed_vc_graphs.keys())
+    {
+        return Err(DeriveProofError::InternalError(
+            "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
+        ));
+    }
+
+    // convert graphs to triples
+    let c14n_original_vc_triples = graph_to_triples(c14n_original_vc_graphs);
+    let c14n_disclosed_vc_triples = graph_to_triples(c14n_disclosed_vc_graphs);
+
     // generate index map
     let index_map_with_proof_values = gen_index_map_and_proof_values(
-        c14n_original_vc_graphs,
-        c14n_disclosed_vc_graphs,
+        &c14n_original_vc_triples,
+        &c14n_disclosed_vc_triples,
         &extended_deanon_map,
     )?;
     println!(
@@ -432,6 +451,36 @@ pub fn derive_proof(
     // TODO: derive proof value
 
     Ok(canonicalized_vp)
+}
+
+// convert original VC graphs and VC proof graphs into `Vec<Triple>`s
+fn graph_to_triples(
+    graphs: BTreeMap<OrderedGraphNameRef, impl Into<VerifiableCredentialTriples>>,
+) -> Vec<VerifiableCredentialTriples> {
+    let triples = graphs
+        .into_iter()
+        .map(|(_, view)| view.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    println!("canonicalized original VC graphs (sorted):");
+    for VerifiableCredentialTriples { document, proof } in &triples {
+        println!(
+            "document:\n{}",
+            document
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+        println!(
+            "proof:\n{}",
+            proof
+                .iter()
+                .map(|t| format!("{} .\n", t.to_string()))
+                .reduce(|l, r| format!("{}{}", l, r))
+                .unwrap()
+        );
+    }
+    triples
 }
 
 // function to remove from the VP the multiple graphs that are reachable from `source` via `link`
@@ -765,72 +814,14 @@ fn reassociate_vc_with_disclosed<'a>(
 }
 
 fn gen_index_map_and_proof_values(
-    c14n_original_vc_graphs: OrderedCanonicalVCGraphs,
-    c14n_disclosed_vc_graphs: OrderedVCGraphViews,
+    c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
+    c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
     extended_deanon_map: &HashMap<BlankNode, Term>,
 ) -> Result<Vec<(StatementIndexMap, String)>, DeriveProofError> {
-    // assert the keys of two VC graphs are equivalent
-    if !c14n_original_vc_graphs
-        .keys()
-        .eq(c14n_disclosed_vc_graphs.keys())
-    {
-        return Err(DeriveProofError::InternalError(
-            "gen_index_map: the keys of two VC graphs must be equivalent".to_string(),
-        ));
-    }
-
-    // convert original VC graphs and VC proof graphs into `Vec<Triple>`s
-    let c14n_original_vc_triples = c14n_original_vc_graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-    println!("canonicalized original VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &c14n_original_vc_triples {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
-
-    // convert disclosed VC graphs and VC proof graphs into `Vec<Triple>`s
-    let mut c14n_disclosed_vc_triples = c14n_disclosed_vc_graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>();
-    println!("canonicalized disclosed VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples {
-        println!(
-            "document:\n{}",
-            document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof:\n{}",
-            proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-    }
+    let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
 
     // deanonymize each disclosed VC triples, keeping their orders
-    for VerifiableCredentialTriples { document, proof } in &mut c14n_disclosed_vc_triples {
+    for VerifiableCredentialTriples { document, proof } in &mut c14n_disclosed_vc_triples_cloned {
         for triple in document.into_iter() {
             deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
             deanonymize_term(extended_deanon_map, &mut triple.object)?;
@@ -841,7 +832,7 @@ fn gen_index_map_and_proof_values(
         }
     }
     println!("deanonymized canonicalized disclosed VC graphs:");
-    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples {
+    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples_cloned {
         println!(
             "document:\n{}",
             document
@@ -861,7 +852,7 @@ fn gen_index_map_and_proof_values(
     }
 
     // calculate index mapping
-    let index_map = c14n_disclosed_vc_triples
+    let index_map = c14n_disclosed_vc_triples_cloned
         .iter()
         .zip(c14n_original_vc_triples)
         .map(
