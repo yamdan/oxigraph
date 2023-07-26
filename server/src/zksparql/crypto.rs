@@ -37,6 +37,7 @@ pub enum DeriveProofError {
     InvalidVP,
     BlankNodeCollisionError,
     DisclosedVCIsNotSubsetOfOriginalVC,
+    DeriveProofValueError,
     InternalError(String),
 }
 
@@ -167,6 +168,12 @@ impl CanonicalVerifiableCredentialTriples {
     }
 }
 
+#[derive(Debug)]
+struct DisclosedVerifiableCredential {
+    document: BTreeMap<usize, Triple>,
+    proof: BTreeMap<usize, Triple>,
+}
+
 pub struct VcWithDisclosed {
     vc: VerifiableCredential,
     disclosed: VerifiableCredential,
@@ -263,6 +270,12 @@ struct StatementIndexMap {
     document_len: usize,
     proof_map: Vec<usize>,
     proof_len: usize,
+}
+
+#[derive(Debug)]
+struct StatementIndexMapWithProofValue {
+    index_map: StatementIndexMap,
+    proof_value: String,
 }
 
 type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
@@ -842,7 +855,7 @@ fn gen_index_map_and_proof_values(
     c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
     c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
     extended_deanon_map: &HashMap<BlankNode, Term>,
-) -> Result<Vec<(StatementIndexMap, String)>, DeriveProofError> {
+) -> Result<Vec<StatementIndexMapWithProofValue>, DeriveProofError> {
     let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
 
     // deanonymize each disclosed VC triples, keeping their orders
@@ -920,15 +933,15 @@ fn gen_index_map_and_proof_values(
                     Term::Literal(literal) => Ok(literal.value()),
                     _ => Err(DeriveProofError::VCWithInvalidProofValue),
                 }?;
-                Ok((
-                    StatementIndexMap {
+                Ok(StatementIndexMapWithProofValue {
+                    index_map: StatementIndexMap {
                         document_map,
                         document_len,
                         proof_map,
                         proof_len,
                     },
-                    proof_value.to_string(),
-                ))
+                    proof_value: proof_value.to_string(),
+                })
             },
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
@@ -937,17 +950,62 @@ fn gen_index_map_and_proof_values(
 }
 
 fn derive_proof_value(
-    c14n_original_vc_triples: Vec<VerifiableCredentialTriples>,
-    c14n_disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
-    index_map_with_proof_values: Vec<(StatementIndexMap, String)>,
+    original_vc_triples: Vec<VerifiableCredentialTriples>,
+    disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
+    index_map_with_proof_values: Vec<StatementIndexMapWithProofValue>,
 ) -> Result<String, DeriveProofError> {
-    todo!()
-
     // TODO: extract signature parameters and issuer public keys
 
     // TODO: identify revealed messages and unrevealed messages
+    let reordered_disclosed_vc_triples = disclosed_vc_triples
+        .iter()
+        .enumerate()
+        .map(|(i, VerifiableCredentialTriples { document, proof })| {
+            let StatementIndexMap {
+                document_map,
+                proof_map,
+                ..
+            } = &index_map_with_proof_values
+                .get(i)
+                .ok_or(DeriveProofError::DeriveProofValueError)?
+                .index_map;
+
+            let mapped_document = document
+                .iter()
+                .enumerate()
+                .map(|(j, triple)| {
+                    let mapped_index = document_map
+                        .get(j)
+                        .ok_or(DeriveProofError::DeriveProofValueError)?;
+                    Ok((*mapped_index, triple.clone()))
+                })
+                .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+
+            let mapped_proof = proof
+                .iter()
+                .enumerate()
+                .map(|(j, triple)| {
+                    let mapped_index = proof_map
+                        .get(j)
+                        .ok_or(DeriveProofError::DeriveProofValueError)?;
+                    Ok((*mapped_index, triple.clone()))
+                })
+                .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+
+            Ok(DisclosedVerifiableCredential {
+                document: mapped_document,
+                proof: mapped_proof,
+            })
+        })
+        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+    println!(
+        "reordered_disclosed_vc_triples:\n{:#?}\n",
+        reordered_disclosed_vc_triples
+    );
 
     // TODO: identify equivalent witnesses
 
     // TODO: generate proofs
+
+    todo!();
 }
