@@ -19,7 +19,7 @@ use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
     witness::PoKBBSSignatureG1 as PoKBBSSignatureG1Wit,
 };
-use rdf_canon::{canon::serialize, issue, relabel, CanonicalizationError};
+use rdf_canon::{issue, relabel, serialize, CanonicalizationError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 // TODO: fix name
