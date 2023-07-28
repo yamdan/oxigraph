@@ -16,6 +16,7 @@ pub enum ZkSparqlError {
     ExtendedQueryFailed,
     IriParseError(IriParseError),
     FailedPseudonymizingQuad,
+    MissingGraphVar,
     FailedBuildingDisclosedSubject,
     StorageError(StorageError),
     FailedBuildingCredentialMetadata,
@@ -81,6 +82,9 @@ impl From<ZkSparqlError> for HttpError {
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
             ZkSparqlError::IriParseError(e) => bad_request(format!("IRI parse error: {}", e)),
             ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
+            ZkSparqlError::MissingGraphVar => {
+                bad_request("graph variables must be given by VALUES at the prove endpoint")
+            }
             ZkSparqlError::FailedBuildingDisclosedSubject => {
                 bad_request("building disclosed subject failed")
             }

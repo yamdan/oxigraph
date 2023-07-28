@@ -296,10 +296,9 @@ fn build_disclosed_subject(
         triple_pattern,
         graph_var,
     } = pattern_with_graph_var;
-
     let g = match solution
         .get(graph_var)
-        .ok_or(ZkSparqlError::FailedBuildingDisclosedSubject)?
+        .ok_or(ZkSparqlError::MissingGraphVar)?
     {
         Term::NamedNode(n) => GraphName::NamedNode(n.clone()),
         _ => return Err(ZkSparqlError::FailedBuildingDisclosedSubject),
