@@ -13,7 +13,8 @@ use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
     BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphName, GraphNameRef,
-    LiteralRef, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    LiteralRef, NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef,
+    Triple,
 };
 use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
@@ -564,9 +565,30 @@ fn deanonymize_subject(
                 }
             }
         }
-        Subject::NamedNode(_) => (),
+        Subject::NamedNode(node) => {
+            if let Some(v) = deanon_map.get(&NamedOrBlankNode::NamedNode(node.clone())) {
+                match v {
+                    Term::NamedNode(n) => *subject = Subject::NamedNode(n.clone()),
+                    Term::BlankNode(n) => *subject = Subject::BlankNode(n.clone()),
+                    _ => return Err(DeriveProofError::DeAnonymizationError),
+                }
+            }
+        }
         Subject::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
     };
+    Ok(())
+}
+
+fn deanonymize_named_node(
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
+    predicate: &mut NamedNode,
+) -> Result<(), DeriveProofError> {
+    if let Some(v) = deanon_map.get(&NamedOrBlankNode::NamedNode(predicate.clone())) {
+        match v {
+            Term::NamedNode(n) => *predicate = n.clone(),
+            _ => return Err(DeriveProofError::DeAnonymizationError),
+        }
+    }
     Ok(())
 }
 
@@ -583,7 +605,16 @@ fn deanonymize_term(
                 }
             }
         }
-        Term::NamedNode(_) | Term::Literal(_) => (),
+        Term::NamedNode(node) => {
+            if let Some(v) = deanon_map.get(&NamedOrBlankNode::NamedNode(node.clone())) {
+                match v {
+                    Term::NamedNode(n) => *term = Term::NamedNode(n.clone()),
+                    Term::BlankNode(n) => *term = Term::BlankNode(n.clone()),
+                    _ => return Err(DeriveProofError::DeAnonymizationError),
+                }
+            }
+        }
+        Term::Literal(_) => (),
         Term::Triple(_) => return Err(DeriveProofError::DeAnonymizationError),
     };
     Ok(())
@@ -869,10 +900,12 @@ fn gen_index_map_and_proof_values(
     for VerifiableCredentialTriples { document, proof } in &mut c14n_disclosed_vc_triples_cloned {
         for triple in document.into_iter() {
             deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
+            deanonymize_named_node(extended_deanon_map, &mut triple.predicate)?;
             deanonymize_term(extended_deanon_map, &mut triple.object)?;
         }
         for triple in proof.into_iter() {
             deanonymize_subject(extended_deanon_map, &mut triple.subject)?;
+            deanonymize_named_node(extended_deanon_map, &mut triple.predicate)?;
             deanonymize_term(extended_deanon_map, &mut triple.object)?;
         }
     }
