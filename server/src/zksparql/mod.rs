@@ -10,8 +10,7 @@ use crate::{
     zksparql::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            deskolemize_solutions, deskolemize_vc_map, get_verifiable_credential,
-            pseudonymize_metadata_and_proofs, TriplePatternWithGraphVar,
+            get_verifiable_credential, pseudonymize_metadata_and_proofs, TriplePatternWithGraphVar,
         },
         crypto::{derive_proof, DeriveProofError, VcWithDisclosed},
         error::ZkSparqlError,
@@ -34,7 +33,6 @@ use std::{
 };
 use url::form_urlencoded;
 
-const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const VC_VARIABLE_PREFIX: &str = "__vc";
 const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:nym:";
@@ -137,10 +135,6 @@ fn evaluate_zksparql_prove(
     let mut disclosed_variables = parsed_zk_query.disclosed_variables;
     println!("disclosed variables:\n{:#?}\n", disclosed_variables);
 
-    // // deskolemize the solutions
-    // let deskolemized_solutions = deskolemize_solutions(extended_solutions)?;
-    // println!("deskolemized_solutions:\n{:#?}\n", deskolemized_solutions);
-
     // identify variables appearing as predicates in the given pattern
     let predicate_variables = extended_triple_patterns
         .iter()
@@ -190,8 +184,6 @@ fn evaluate_zksparql_prove(
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
     println!("disclosed_vcs:\n{:#?}\n", disclosed_vcs);
 
-    todo!();
-
     // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
     for (vc_graph_name, quads) in disclosed_subjects {
         disclosed_vcs
@@ -200,19 +192,18 @@ fn evaluate_zksparql_prove(
     }
 
     // 9. get deanonymization map
-    let mut deanon_map = nymizer.get_deanon_map();
-
-    // 10. deskolemize
-    let deskolemized_vcs = deskolemize_vc_map(&vcs, &mut None)?;
-    let deskolemized_disclosed_vcs = deskolemize_vc_map(&disclosed_vcs, &mut Some(deanon_map))?;
+    let deanon_map = nymizer.get_deanon_map();
 
     // 11. build VP
-    let vc_with_disclosed = deskolemized_vcs
+    let vc_with_disclosed = vcs
         .iter()
         .map(|(vc_graph_name, vc)| {
-            let disclosed_vc = deskolemized_disclosed_vcs.get(vc_graph_name).ok_or(
-                DeriveProofError::InternalError("VC and Disclosed VCs are unmatched".to_string()),
-            )?;
+            let disclosed_vc =
+                disclosed_vcs
+                    .get(vc_graph_name)
+                    .ok_or(DeriveProofError::InternalError(
+                        "VC and Disclosed VCs are unmatched".to_string(),
+                    ))?;
             Ok(VcWithDisclosed::new(vc.into(), disclosed_vc.into()))
         })
         .collect::<Result<Vec<_>, ZkSparqlError>>()?;

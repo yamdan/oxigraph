@@ -3,13 +3,13 @@ use super::{
     error::ZkSparqlError,
     nymizer::Pseudonymizer,
     parser::{ZkQuery, ZkQueryValues},
-    SKOLEM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
+    SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
-use oxigraph::{sparql::QuerySolutionIter, store::Store};
+use oxigraph::store::Store;
 use oxrdf::{
-    vocab::rdf::TYPE, BlankNode, Graph, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad,
-    Subject, Term, Triple, Variable,
+    vocab::rdf::TYPE, Graph, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Subject, Term,
+    Triple, Variable,
 };
 use spargebra::{
     algebra::{Expression, Function, GraphPattern},
@@ -442,129 +442,4 @@ pub fn pseudonymize_metadata_and_proofs(
         subject: vec![],
         proof: nymized_proof,
     })
-}
-
-pub fn deskolemize_solutions(
-    solutions: QuerySolutionIter,
-) -> Result<Vec<HashMap<Variable, Term>>, ZkSparqlError> {
-    solutions
-        .map(|solution| {
-            solution?
-                .iter()
-                .map(|(var, term)| {
-                    let deskolemized_term = match term {
-                        Term::NamedNode(iri) if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) => {
-                            let iri_str = iri.as_str();
-                            BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
-                                .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))?
-                                .into()
-                        }
-                        _ => term.clone(),
-                    };
-                    Ok((var.clone(), deskolemized_term))
-                })
-                .collect()
-        })
-        .collect::<Result<Vec<HashMap<_, _>>, ZkSparqlError>>()
-}
-
-pub fn deskolemize_vc_map(
-    vc_map: &HashMap<GraphName, VerifiableCredential>,
-    deanon_map: &mut Option<HashMap<NamedOrBlankNode, Term>>,
-) -> Result<HashMap<GraphName, VerifiableCredential>, ZkSparqlError> {
-    vc_map
-        .iter()
-        .map(|(g, vc)| {
-            let s_g = deskolemize_graph_name(g, deanon_map)?;
-            let s_vc = deskolemize_vc(vc, deanon_map)?;
-            Ok((s_g, s_vc))
-        })
-        .collect()
-}
-
-pub fn deskolemize_vc(
-    vc: &VerifiableCredential,
-    deanon_map: &mut Option<HashMap<NamedOrBlankNode, Term>>,
-) -> Result<VerifiableCredential, ZkSparqlError> {
-    let metadata: Vec<_> = vc
-        .metadata
-        .iter()
-        .map(|metadata| deskolemize_quad(metadata, deanon_map))
-        .collect::<Result<_, _>>()?;
-    let subject: Vec<_> = vc
-        .subject
-        .iter()
-        .map(|subject| deskolemize_quad(subject, deanon_map))
-        .collect::<Result<_, _>>()?;
-    let proof: Vec<_> = vc
-        .proof
-        .iter()
-        .map(|proof| deskolemize_quad(proof, deanon_map))
-        .collect::<Result<_, _>>()?;
-    Ok(VerifiableCredential {
-        metadata,
-        subject,
-        proof,
-    })
-}
-
-pub fn deskolemize_iri(
-    iri: &NamedNode,
-    deanon_map: &mut Option<HashMap<NamedOrBlankNode, Term>>,
-) -> Result<BlankNode, ZkSparqlError> {
-    let iri_str = iri.as_str();
-    if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
-        let deskolemized = BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
-            .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))?;
-
-        if let Some(deanon_map) = deanon_map {
-            if let Some(v) = deanon_map.remove(&NamedOrBlankNode::NamedNode(iri.clone())) {
-                deanon_map.insert(oxrdf::NamedOrBlankNode::BlankNode(deskolemized), v);
-            }
-        }
-        BlankNode::new(&iri_str[SKOLEM_IRI_PREFIX.len()..iri_str.len()])
-            .map_err(|_| ZkSparqlError::InvalidSkolemIRI(iri.clone()))
-    } else {
-        Err(ZkSparqlError::InvalidSkolemIRI(iri.clone()))
-    }
-}
-
-pub fn deskolemize_graph_name(
-    graph_name: &GraphName,
-    deanon_map: &mut Option<HashMap<NamedOrBlankNode, Term>>,
-) -> Result<GraphName, ZkSparqlError> {
-    match graph_name {
-        GraphName::NamedNode(iri) if is_skolem_iri(iri) => {
-            Ok(GraphName::BlankNode(deskolemize_iri(iri, deanon_map)?))
-        }
-        _ => Ok(graph_name.clone()),
-    }
-}
-
-pub fn deskolemize_quad(
-    quad: &Quad,
-    deanon_map: &mut Option<HashMap<NamedOrBlankNode, Term>>,
-) -> Result<Quad, ZkSparqlError> {
-    let s = match &quad.subject {
-        Subject::NamedNode(n) if is_skolem_iri(n) => {
-            Subject::BlankNode(deskolemize_iri(n, deanon_map)?)
-        }
-        _ => quad.subject.clone(),
-    };
-    let p = quad.predicate.clone();
-    let o = match &quad.object {
-        Term::NamedNode(n) if is_skolem_iri(n) => Term::BlankNode(deskolemize_iri(n, deanon_map)?),
-        _ => quad.object.clone(),
-    };
-    let g = match &quad.graph_name {
-        GraphName::NamedNode(n) if is_skolem_iri(n) => {
-            GraphName::BlankNode(deskolemize_iri(n, deanon_map)?)
-        }
-        _ => quad.graph_name.clone(),
-    };
-    Ok(Quad::new(s, p, o, g))
-}
-
-pub fn is_skolem_iri(iri: &NamedNode) -> bool {
-    iri.as_str().starts_with(SKOLEM_IRI_PREFIX)
 }
