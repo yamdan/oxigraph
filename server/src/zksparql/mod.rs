@@ -10,8 +10,8 @@ use crate::{
     zksparql::{
         builder::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
-            deskolemize_deanon_map, deskolemize_vc_map, get_verifiable_credential,
-            pseudonymize_metadata_and_proofs,
+            deskolemize_solutions, deskolemize_vc_map, get_verifiable_credential,
+            pseudonymize_metadata_and_proofs, TriplePatternWithGraphVar,
         },
         crypto::{derive_proof, DeriveProofError, VcWithDisclosed},
         error::ZkSparqlError,
@@ -28,19 +28,16 @@ use oxigraph::{
 };
 use oxrdf::{Literal, Variable};
 use sparesults::QueryResultsSerializer;
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 use url::form_urlencoded;
 
 const SKOLEM_IRI_PREFIX: &str = "urn:bnid:";
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const VC_VARIABLE_PREFIX: &str = "__vc";
-const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:bnid:";
-const PSEUDONYM_ALPHABETS: [char; 62] = [
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
-    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B',
-    'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
-    'V', 'W', 'X', 'Y', 'Z',
-];
+const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:nym:";
 const CRYPTOSUITE_FOR_VP: &str = "bbs-term-proof-2023";
 const VP_VARIABLE: &str = "__vp";
 
@@ -140,10 +137,29 @@ fn evaluate_zksparql_prove(
     let mut disclosed_variables = parsed_zk_query.disclosed_variables;
     println!("disclosed variables:\n{:#?}\n", disclosed_variables);
 
-    // 4. pseudonymize the extended prove solutions
+    // // deskolemize the solutions
+    // let deskolemized_solutions = deskolemize_solutions(extended_solutions)?;
+    // println!("deskolemized_solutions:\n{:#?}\n", deskolemized_solutions);
+
+    // identify variables appearing as predicates in the given pattern
+    let predicate_variables = extended_triple_patterns
+        .iter()
+        .filter_map(|TriplePatternWithGraphVar { triple_pattern, .. }| {
+            match &triple_pattern.predicate {
+                spargebra::term::NamedNodePattern::Variable(v) => Some(v),
+                spargebra::term::NamedNodePattern::NamedNode(_) => None,
+            }
+        })
+        .collect::<HashSet<_>>();
+    println!("predicate_variables:\n{:#?}\n", predicate_variables);
+
+    // 4. pseudonymize the solutions
     let mut nymizer = Pseudonymizer::default();
-    let mut pseudonymized_solutions =
-        nymizer.pseudonymize_solutions(extended_solutions, &disclosed_variables)?;
+    let mut pseudonymized_solutions = nymizer.pseudonymize_solutions_from_query(
+        extended_solutions,
+        &disclosed_variables,
+        &predicate_variables,
+    )?;
     println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
     // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
@@ -172,6 +188,9 @@ fn evaluate_zksparql_prove(
             ))
         })
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
+    println!("disclosed_vcs:\n{:#?}\n", disclosed_vcs);
+
+    todo!();
 
     // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
     for (vc_graph_name, quads) in disclosed_subjects {
@@ -181,12 +200,11 @@ fn evaluate_zksparql_prove(
     }
 
     // 9. get deanonymization map
-    let deanon_map = nymizer.get_deanon_map();
+    let mut deanon_map = nymizer.get_deanon_map();
 
     // 10. deskolemize
-    let deskolemized_vcs = deskolemize_vc_map(&vcs)?;
-    let deskolemized_disclosed_vcs = deskolemize_vc_map(&disclosed_vcs)?;
-    let deskolemized_deanon_map = deskolemize_deanon_map(&deanon_map)?;
+    let deskolemized_vcs = deskolemize_vc_map(&vcs, &mut None)?;
+    let deskolemized_disclosed_vcs = deskolemize_vc_map(&disclosed_vcs, &mut Some(deanon_map))?;
 
     // 11. build VP
     let vc_with_disclosed = deskolemized_vcs
@@ -198,7 +216,7 @@ fn evaluate_zksparql_prove(
             Ok(VcWithDisclosed::new(vc.into(), disclosed_vc.into()))
         })
         .collect::<Result<Vec<_>, ZkSparqlError>>()?;
-    let vp = derive_proof(&vc_with_disclosed, &deskolemized_deanon_map)?;
+    let vp = derive_proof(&vc_with_disclosed, &deanon_map)?;
 
     // 12. add VP to the solution
     disclosed_variables.push(Variable::new(VP_VARIABLE)?);

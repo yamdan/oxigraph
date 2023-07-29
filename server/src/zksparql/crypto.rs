@@ -13,7 +13,7 @@ use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
     BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphName, GraphNameRef,
-    LiteralRef, NamedNodeRef, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    LiteralRef, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
@@ -170,8 +170,8 @@ impl CanonicalVerifiableCredentialTriples {
 
 #[derive(Debug)]
 struct DisclosedVerifiableCredential {
-    document: BTreeMap<usize, Triple>,
-    proof: BTreeMap<usize, Triple>,
+    document: BTreeMap<usize, Option<Triple>>,
+    proof: BTreeMap<usize, Option<Triple>>,
 }
 
 pub struct VcWithDisclosed {
@@ -286,7 +286,7 @@ type OrderedCanonicalVerifiableCredentialTriples<'a> =
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
-    deanon_map: &HashMap<BlankNode, Term>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<Dataset, DeriveProofError> {
     println!("*** start derive_proof ***");
 
@@ -551,12 +551,12 @@ fn remove_graph<'a>(
 }
 
 fn deanonymize_subject(
-    deanon_map: &HashMap<BlankNode, Term>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
     subject: &mut Subject,
 ) -> Result<(), DeriveProofError> {
     match subject {
         Subject::BlankNode(bnode) => {
-            if let Some(v) = deanon_map.get(bnode) {
+            if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
                 match v {
                     Term::NamedNode(n) => *subject = Subject::NamedNode(n.clone()),
                     Term::BlankNode(n) => *subject = Subject::BlankNode(n.clone()),
@@ -571,12 +571,12 @@ fn deanonymize_subject(
 }
 
 fn deanonymize_term(
-    deanon_map: &HashMap<BlankNode, Term>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
     term: &mut Term,
 ) -> Result<(), DeriveProofError> {
     match term {
         Term::BlankNode(bnode) => {
-            if let Some(v) = deanon_map.get(bnode) {
+            if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
                 match v {
                     Term::NamedNode(_) | Term::BlankNode(_) | Term::Literal(_) => *term = v.clone(),
                     _ => return Err(DeriveProofError::DeAnonymizationError),
@@ -734,11 +734,11 @@ fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
 }
 
 fn extend_deanon_map(
-    deanon_map: &HashMap<BlankNode, Term>,
+    deanon_map: &HashMap<NamedOrBlankNode, Term>,
     issued_identifiers_map: &HashMap<String, String>,
     c14n_map_for_original_vc: &HashMap<String, String>,
-) -> Result<HashMap<BlankNode, Term>, DeriveProofError> {
-    issued_identifiers_map
+) -> Result<HashMap<NamedOrBlankNode, Term>, DeriveProofError> {
+    let mut res = issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
             let mapped_bnid = match c14n_map_for_original_vc.get(bnid) {
@@ -746,13 +746,20 @@ fn extend_deanon_map(
                 None => bnid,
             };
             let bnode = BlankNode::new(mapped_bnid)?;
-            if let Some(v) = deanon_map.get(&bnode) {
-                Ok((BlankNode::new(cnid)?, v.clone()))
+            let cnid = NamedOrBlankNode::BlankNode(BlankNode::new(cnid)?);
+            if let Some(v) = deanon_map.get(&NamedOrBlankNode::BlankNode(bnode.clone())) {
+                Ok((cnid, v.clone()))
             } else {
-                Ok((BlankNode::new(cnid)?, bnode.into()))
+                Ok((cnid, bnode.into()))
             }
         })
-        .collect::<Result<HashMap<_, _>, DeriveProofError>>()
+        .collect::<Result<HashMap<_, _>, DeriveProofError>>()?;
+    for (k, v) in deanon_map {
+        if let NamedOrBlankNode::NamedNode(_) = k {
+            res.insert(k.clone(), v.clone());
+        }
+    }
+    Ok(res)
 }
 
 fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
@@ -803,7 +810,7 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
 fn reassociate_vc_with_disclosed<'a>(
     c14n_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
     c14n_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
-    extended_deanon_map: &'a HashMap<BlankNode, Term>,
+    extended_deanon_map: &'a HashMap<NamedOrBlankNode, Term>,
     vc_graph_names: &Vec<BlankNode>,
 ) -> Result<OrderedCanonicalVerifiableCredentialTriples<'a>, DeriveProofError> {
     c14n_disclosed_vc_graphs
@@ -854,7 +861,7 @@ fn graph_to_triples(
 fn gen_index_map_and_proof_values(
     c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
     c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
-    extended_deanon_map: &HashMap<BlankNode, Term>,
+    extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
 ) -> Result<Vec<StatementIndexMapWithProofValue>, DeriveProofError> {
     let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
 
@@ -964,33 +971,40 @@ fn derive_proof_value(
             let StatementIndexMap {
                 document_map,
                 proof_map,
-                ..
+                document_len,
+                proof_len,
             } = &index_map_with_proof_values
                 .get(i)
                 .ok_or(DeriveProofError::DeriveProofValueError)?
                 .index_map;
 
-            let mapped_document = document
+            let mut mapped_document = document
                 .iter()
                 .enumerate()
                 .map(|(j, triple)| {
                     let mapped_index = document_map
                         .get(j)
                         .ok_or(DeriveProofError::DeriveProofValueError)?;
-                    Ok((*mapped_index, triple.clone()))
+                    Ok((*mapped_index, Some(triple.clone())))
                 })
                 .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+            for i in 0..*document_len {
+                mapped_document.entry(i).or_insert(None);
+            }
 
-            let mapped_proof = proof
+            let mut mapped_proof = proof
                 .iter()
                 .enumerate()
                 .map(|(j, triple)| {
                     let mapped_index = proof_map
                         .get(j)
                         .ok_or(DeriveProofError::DeriveProofValueError)?;
-                    Ok((*mapped_index, triple.clone()))
+                    Ok((*mapped_index, Some(triple.clone())))
                 })
                 .collect::<Result<BTreeMap<_, _>, DeriveProofError>>()?;
+            for i in 0..*proof_len {
+                mapped_proof.entry(i).or_insert(None);
+            }
 
             Ok(DisclosedVerifiableCredential {
                 document: mapped_document,
@@ -1004,6 +1018,41 @@ fn derive_proof_value(
     );
 
     // TODO: identify equivalent witnesses
+    // reordered_disclosed_vc_triples
+    //     .iter()
+    //     .zip(original_vc_triples)
+    //     .map(
+    //         |(
+    //             DisclosedVerifiableCredential {
+    //                 document: disclosed_document,
+    //                 proof: disclosed_proof,
+    //             },
+    //             VerifiableCredentialTriples {
+    //                 document: original_document,
+    //                 proof: original_proof,
+    //             },
+    //         )| {
+    //             let mut revealed_messages = BTreeMap::new();
+    //             let mut unrevealed_messages = BTreeMap::new();
+    //             for (i, t) in disclosed_document {
+    //                 let original = original_document
+    //                     .get(*i)
+    //                     .ok_or(DeriveProofError::DeriveProofValueError)?;
+    //                 match t {
+    //                     Some(triple) => {
+    //                         match triple.subject {
+    //                             Subject::BlankNode(_) => unrevealed_messages.insert(3 * i, original.subject),
+    //                             Subject::NamedNode(_) => revealed_messages.insert(3 * i, original.subject),
+    //                             Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
+    //                        };
+    //                        revealed_messages
+    //                        ,
+    //                     None =>
+    //                     ,
+    //                 }
+    //             }
+    //         },
+    //     );
 
     // TODO: generate proofs
 

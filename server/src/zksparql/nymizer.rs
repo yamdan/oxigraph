@@ -1,48 +1,59 @@
 use super::{
-    error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, PSEUDONYM_ALPHABETS, SKOLEM_IRI_PREFIX,
-    SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
+    error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
-use nanoid::nanoid;
 use oxigraph::sparql::QuerySolutionIter;
-use oxrdf::{GraphName, Literal, NamedNode, Quad, Subject, Term, Variable};
+use oxrdf::{
+    BlankNode, GraphName, Literal, NamedNode, NamedOrBlankNode, Quad, Subject, Term, Variable,
+};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct Pseudonymizer {
-    iri_to_nym: HashMap<NamedNode, NamedNode>,
-    nym_to_literal: HashMap<NamedNode, Term>,
+    iri_to_nym: HashMap<NamedNode, NamedOrBlankNode>,
+    nym_to_literal: HashMap<NamedOrBlankNode, Term>,
 }
 
 impl Pseudonymizer {
-    pub fn generate_pseudonymous_iri() -> NamedNode {
-        let val = nanoid!(21, &PSEUDONYM_ALPHABETS);
-        NamedNode::new_unchecked(format!("{}{}", PSEUDONYMOUS_IRI_PREFIX, val))
-    }
-
-    fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedNode> {
+    fn get_iri_nym(&self, iri: &NamedNode) -> Option<NamedOrBlankNode> {
         self.iri_to_nym.get(iri).cloned()
     }
 
-    fn issue_iri_nym(&mut self, iri: &NamedNode) -> NamedNode {
-        if iri.as_str().starts_with(SKOLEM_IRI_PREFIX) {
-            iri.clone() // do not issue nym for Skolem IRI
-        } else {
-            let nym = Self::generate_pseudonymous_iri();
-            self.iri_to_nym.entry(iri.clone()).or_insert(nym).clone()
-        }
+    // issue blank node nym to pseudonymize an IRI as subject, object, or graph name
+    fn issue_nym_for_iri(&mut self, iri: &NamedNode) -> NamedOrBlankNode {
+        self.iri_to_nym
+            .entry(iri.clone())
+            .or_insert(BlankNode::default().into())
+            .clone()
     }
 
-    fn issue_literal_nym(&mut self, literal: &Literal) -> NamedNode {
-        // let nym = Self::generate_pseudonymous_var();
-        let nym = Self::generate_pseudonymous_iri();
-        self.nym_to_literal
-            .insert(nym.clone(), Term::Literal(literal.clone()));
-        nym
+    // issue IRI nym to pseudonymize an IRI as predicate
+    fn issue_named_nym_for_iri(&mut self, iri: &NamedNode) -> NamedOrBlankNode {
+        self.iri_to_nym
+            .entry(iri.clone())
+            .or_insert(
+                NamedNode::new_unchecked(format!(
+                    "{}{}",
+                    PSEUDONYMOUS_IRI_PREFIX,
+                    BlankNode::default().as_str()
+                ))
+                .into(),
+            )
+            .clone()
     }
 
-    pub fn get_deanon_map(&self) -> HashMap<NamedNode, Term> {
-        let mut nym_to_iri: HashMap<NamedNode, Term> = self
+    // issue blank node nym to pseudonymize a literal as object
+    fn issue_nym_for_literal(&mut self, literal: &Literal) -> NamedOrBlankNode {
+        let nym = BlankNode::default();
+        self.nym_to_literal.insert(
+            NamedOrBlankNode::BlankNode(nym.clone()),
+            Term::Literal(literal.clone()),
+        );
+        NamedOrBlankNode::BlankNode(nym)
+    }
+
+    pub fn get_deanon_map(&self) -> HashMap<NamedOrBlankNode, Term> {
+        let mut nym_to_iri: HashMap<NamedOrBlankNode, Term> = self
             .iri_to_nym
             .iter()
             .map(|(iri, nym)| (nym.clone(), Term::NamedNode(iri.clone())))
@@ -51,14 +62,15 @@ impl Pseudonymizer {
         nym_to_iri
     }
 
-    pub fn pseudonymize_solutions(
+    pub fn pseudonymize_solutions_from_query(
         &mut self,
         solutions: QuerySolutionIter,
         disclosed_variables: &[Variable],
+        predicate_variables: &HashSet<&Variable>,
     ) -> Result<Vec<HashMap<Variable, Term>>, ZkSparqlError> {
         let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
 
-        let pseudonymous_solutions: Result<Vec<HashMap<_, _>>, ZkSparqlError> = solutions
+        solutions
             .map(|solution| {
                 solution?
                     .iter()
@@ -68,74 +80,140 @@ impl Pseudonymizer {
                                 Term::NamedNode(n)
                                     if n.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) =>
                                 {
-                                    Term::NamedNode(NamedNode::new(
+                                    Ok(Term::NamedNode(NamedNode::new(
                                         &n.as_str()
                                             [0..(n.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
-                                    )?)
+                                    )?))
                                 }
-                                _ => {
-                                    return Err(ZkSparqlError::InternalError(
-                                        "stored VC graph name must be IRI".to_owned(),
-                                    ))
-                                }
+                                _ => Err(ZkSparqlError::InternalError(
+                                    "stored VC graph name must be IRI".to_owned(),
+                                )),
                             }
                         } else if disclosed_variables.contains(var) {
-                            term.clone()
+                            Ok(term.clone())
+                        } else if predicate_variables.contains(var) {
+                            match term {
+                                Term::NamedNode(n) => Ok(self.issue_named_nym_for_iri(n).into()),
+                                _ => Err(ZkSparqlError::InternalError(
+                                    "predicate must be IRI".to_owned(),
+                                )),
+                            }
                         } else {
                             match term {
-                                Term::NamedNode(n) => Term::NamedNode(self.issue_iri_nym(n)),
-                                Term::Literal(l) => Term::NamedNode(self.issue_literal_nym(l)),
-                                Term::BlankNode(n) => {
-                                    return Err(ZkSparqlError::BlankNodeMustBeSkolemized(n.clone()))
-                                }
-                                Term::Triple(_) => {
-                                    return Err(ZkSparqlError::InternalError(
-                                        "stored VC must not contain a quoted triple".to_owned(),
-                                    ))
-                                }
+                                Term::NamedNode(n) => Ok(self.issue_nym_for_iri(n).into()),
+                                Term::Literal(l) => Ok(self.issue_nym_for_literal(l).into()),
+                                Term::BlankNode(_) => Ok(term.clone()),
+                                Term::Triple(_) => Err(ZkSparqlError::InternalError(
+                                    "stored VC must not contain a quoted triple".to_owned(),
+                                )),
                             }
                         };
-                        Ok((var.clone(), pseudonymized_term))
+                        Ok((var.clone(), pseudonymized_term?))
                     })
-                    .collect()
+                    .collect::<Result<HashMap<_, _>, _>>()
             })
-            .collect();
-        pseudonymous_solutions
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub fn pseudonymize_solutions(
+        &mut self,
+        solutions: Vec<HashMap<Variable, Term>>,
+        disclosed_variables: &[Variable],
+        predicate_variables: &HashSet<&Variable>,
+    ) -> Result<Vec<HashMap<Variable, Term>>, ZkSparqlError> {
+        let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
+
+        solutions
+            .iter()
+            .map(|solution| {
+                solution
+                    .iter()
+                    .map(|(var, term)| {
+                        let pseudonymized_term = if var.as_str().starts_with(VC_VARIABLE_PREFIX) {
+                            match term {
+                                Term::BlankNode(b)
+                                    if b.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) =>
+                                {
+                                    Ok(Term::BlankNode(BlankNode::new(
+                                        &b.as_str()
+                                            [0..(b.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
+                                    )?))
+                                }
+                                _ => Err(ZkSparqlError::InternalError(
+                                    "stored VC graph name must be blank node".to_owned(),
+                                )),
+                            }
+                        } else if disclosed_variables.contains(var) {
+                            Ok(term.clone())
+                        } else if predicate_variables.contains(var) {
+                            match term {
+                                Term::NamedNode(n) => Ok(self.issue_named_nym_for_iri(n).into()),
+                                _ => Err(ZkSparqlError::InternalError(
+                                    "predicate must be IRI".to_owned(),
+                                )),
+                            }
+                        } else {
+                            match term {
+                                Term::NamedNode(n) => Ok(self.issue_nym_for_iri(n).into()),
+                                Term::Literal(l) => Ok(self.issue_nym_for_literal(l).into()),
+                                Term::BlankNode(_) => Ok(term.clone()),
+                                Term::Triple(_) => Err(ZkSparqlError::InternalError(
+                                    "stored VC must not contain a quoted triple".to_owned(),
+                                )),
+                            }
+                        };
+                        Ok((var.clone(), pseudonymized_term?))
+                    })
+                    .collect::<Result<HashMap<_, _>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 
     pub fn pseudonymize_quad(
         &mut self,
-        quad: Quad,
+        quad: &Quad,
         additional_targets: &HashSet<NamedNode>,
     ) -> Result<Quad, ZkSparqlError> {
         let mut pseudonymize_iri = |iri| {
-            if additional_targets.contains(&iri) {
-                self.issue_iri_nym(&iri)
+            if additional_targets.contains(iri) {
+                self.issue_nym_for_iri(iri)
             } else {
-                match self.get_iri_nym(&iri) {
+                match self.get_iri_nym(iri) {
                     Some(nym) => nym,
-                    None => iri,
+                    None => NamedOrBlankNode::NamedNode(iri.clone()),
                 }
             }
         };
 
-        let s = match quad.subject {
-            Subject::NamedNode(iri) => Ok(Subject::NamedNode(pseudonymize_iri(iri))),
-            Subject::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
+        let s = match &quad.subject {
+            Subject::NamedNode(iri) => Ok(match pseudonymize_iri(&iri) {
+                NamedOrBlankNode::NamedNode(n) => Subject::NamedNode(n),
+                NamedOrBlankNode::BlankNode(b) => Subject::BlankNode(b),
+            }),
+            Subject::BlankNode(_) => Ok(quad.subject.clone()),
             Subject::Triple(_) => Err(ZkSparqlError::FailedPseudonymizingQuad),
         }?;
-        let p = pseudonymize_iri(quad.predicate);
-        let o = match quad.object {
-            Term::NamedNode(iri) => Ok(Term::NamedNode(pseudonymize_iri(iri))),
-            Term::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
-            Term::Literal(l) => Ok(Term::Literal(l)),
+        let p = match pseudonymize_iri(&quad.predicate) {
+            NamedOrBlankNode::NamedNode(_) => Ok(quad.predicate.clone()), // predicate should not be initially pseudonymized here
+            NamedOrBlankNode::BlankNode(_) => Err(ZkSparqlError::FailedPseudonymizingQuad),
+        }?;
+        let o = match &quad.object {
+            Term::NamedNode(iri) => Ok(match pseudonymize_iri(&iri) {
+                NamedOrBlankNode::NamedNode(n) => Term::NamedNode(n),
+                NamedOrBlankNode::BlankNode(b) => Term::BlankNode(b),
+            }),
+            Term::BlankNode(_) => Ok(quad.object.clone()),
+            Term::Literal(_) => Ok(quad.object.clone()),
             Term::Triple(_) => Err(ZkSparqlError::FailedPseudonymizingQuad),
         }?;
-        let g = match quad.graph_name {
-            GraphName::NamedNode(iri) => Ok(GraphName::NamedNode(pseudonymize_iri(iri))),
-            GraphName::BlankNode(n) => Err(ZkSparqlError::BlankNodeMustBeSkolemized(n)),
-            GraphName::DefaultGraph => Ok(quad.graph_name),
-        }?;
+        let g = match &quad.graph_name {
+            GraphName::NamedNode(iri) => match pseudonymize_iri(&iri) {
+                NamedOrBlankNode::NamedNode(n) => GraphName::NamedNode(n),
+                NamedOrBlankNode::BlankNode(b) => GraphName::BlankNode(b),
+            },
+            GraphName::BlankNode(_) => quad.graph_name.clone(),
+            GraphName::DefaultGraph => quad.graph_name.clone(),
+        };
         Ok(Quad::new(s, p, o, g))
     }
 }

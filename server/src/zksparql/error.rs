@@ -3,7 +3,7 @@ use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
-use oxrdf::{BlankNode, NamedNode, VariableNameParseError};
+use oxrdf::{BlankNode, BlankNodeIdParseError, NamedNode, VariableNameParseError};
 use rdf_canon::CanonicalizationError;
 use spargebra::ParseError;
 
@@ -15,6 +15,7 @@ pub enum ZkSparqlError {
     SparqlEvaluationError(EvaluationError),
     ExtendedQueryFailed,
     IriParseError(IriParseError),
+    BlankNodeIdParseError(BlankNodeIdParseError),
     FailedPseudonymizingQuad,
     MissingGraphVar,
     FailedBuildingDisclosedSubject,
@@ -42,6 +43,12 @@ impl From<EvaluationError> for ZkSparqlError {
 impl From<IriParseError> for ZkSparqlError {
     fn from(e: IriParseError) -> Self {
         Self::IriParseError(e)
+    }
+}
+
+impl From<BlankNodeIdParseError> for ZkSparqlError {
+    fn from(e: BlankNodeIdParseError) -> Self {
+        Self::BlankNodeIdParseError(e)
     }
 }
 
@@ -81,6 +88,9 @@ impl From<ZkSparqlError> for HttpError {
             }
             ZkSparqlError::ExtendedQueryFailed => bad_request("internal query execution failed"),
             ZkSparqlError::IriParseError(e) => bad_request(format!("IRI parse error: {}", e)),
+            ZkSparqlError::BlankNodeIdParseError(e) => {
+                bad_request(format!("Blank node ID parse error: {}", e))
+            }
             ZkSparqlError::FailedPseudonymizingQuad => bad_request("pseudonymizing quad failed"),
             ZkSparqlError::MissingGraphVar => {
                 bad_request("graph variables must be given by VALUES at the prove endpoint")
