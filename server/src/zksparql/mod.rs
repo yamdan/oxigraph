@@ -132,10 +132,11 @@ fn evaluate_zksparql_prove(
         _ => return Err(ZkSparqlError::ExtendedQueryFailed),
     };
 
+    // 4. identify variables to be disclosed
     let mut disclosed_variables = parsed_zk_query.disclosed_variables;
     println!("disclosed variables:\n{:#?}\n", disclosed_variables);
 
-    // identify variables appearing as predicates in the given pattern
+    // 5. identify variables appearing as predicates in the given pattern
     let predicate_variables = extended_triple_patterns
         .iter()
         .filter_map(|TriplePatternWithGraphVar { triple_pattern, .. }| {
@@ -147,21 +148,21 @@ fn evaluate_zksparql_prove(
         .collect::<HashSet<_>>();
     println!("predicate_variables:\n{:#?}\n", predicate_variables);
 
-    // 4. pseudonymize the solutions
+    // 6. pseudonymize the solutions
     let mut nymizer = Pseudonymizer::default();
-    let mut pseudonymized_solutions = nymizer.pseudonymize_solutions_from_query(
+    let mut pseudonymized_solutions = nymizer.pseudonymize_solutions(
         extended_solutions,
         &disclosed_variables,
         &predicate_variables,
     )?;
     println!("pseudonymous solutions:\n{:#?}\n", pseudonymized_solutions);
 
-    // 5. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
+    // 7. build disclosed subjects by assigning pseudonymous solutions to extended prove patterns
     let disclosed_subjects =
         build_disclosed_subjects(&pseudonymized_solutions, &extended_triple_patterns)?;
     println!("disclosed subjects:\n{:#?}\n", disclosed_subjects);
 
-    // 6. get associated VCs
+    // 8. get associated VCs
     let vcs = disclosed_subjects
         .keys()
         .map(|vc_graph_name| {
@@ -172,7 +173,7 @@ fn evaluate_zksparql_prove(
         })
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
 
-    // 7. pseudonymize VCs
+    // 9. pseudonymize VCs
     let mut disclosed_vcs = vcs
         .iter()
         .map(|(vc_graph_name, vc)| {
@@ -184,17 +185,17 @@ fn evaluate_zksparql_prove(
         .collect::<Result<HashMap<_, _>, ZkSparqlError>>()?;
     println!("disclosed_vcs:\n{:#?}\n", disclosed_vcs);
 
-    // 8. add disclosed subjects into pseudonymized VCs to get disclosed VCs
+    // 10. add disclosed subjects into pseudonymized VCs to get disclosed VCs
     for (vc_graph_name, quads) in disclosed_subjects {
         disclosed_vcs
             .entry(vc_graph_name)
             .and_modify(|vc| vc.subject = quads.into_iter().collect());
     }
 
-    // 9. get deanonymization map
+    // 11. get deanonymization map
     let deanon_map = nymizer.get_deanon_map();
 
-    // 11. build VP
+    // 12. build VP
     let vc_with_disclosed = vcs
         .iter()
         .map(|(vc_graph_name, vc)| {
@@ -209,7 +210,7 @@ fn evaluate_zksparql_prove(
         .collect::<Result<Vec<_>, ZkSparqlError>>()?;
     let vp = derive_proof(&vc_with_disclosed, &deanon_map)?;
 
-    // 12. add VP to the solution
+    // 13. add VP to the solution
     disclosed_variables.push(Variable::new(VP_VARIABLE)?);
     for solution in &mut pseudonymized_solutions {
         solution.insert(
@@ -224,7 +225,7 @@ fn evaluate_zksparql_prove(
         );
     }
 
-    // 13. return query results
+    // 14. return query results
     Ok(QueryResults::Solutions(QuerySolutionIter::new(
         Rc::new(disclosed_variables.clone()),
         Box::new(pseudonymized_solutions.into_iter().map(move |m| {

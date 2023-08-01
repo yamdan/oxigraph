@@ -1,6 +1,4 @@
-use super::{
-    error::ZkSparqlError, NYM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
-};
+use super::{error::ZkSparqlError, NYM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX};
 
 use oxigraph::sparql::QuerySolutionIter;
 use oxrdf::{
@@ -62,7 +60,7 @@ impl Pseudonymizer {
         nym_to_iri
     }
 
-    pub fn pseudonymize_solutions_from_query(
+    pub fn pseudonymize_solutions(
         &mut self,
         solutions: QuerySolutionIter,
         disclosed_variables: &[Variable],
@@ -87,60 +85,6 @@ impl Pseudonymizer {
                                 }
                                 _ => Err(ZkSparqlError::InternalError(
                                     "stored VC graph name must be IRI".to_owned(),
-                                )),
-                            }
-                        } else if disclosed_variables.contains(var) {
-                            Ok(term.clone())
-                        } else if predicate_variables.contains(var) {
-                            match term {
-                                Term::NamedNode(n) => Ok(self.issue_named_nym_for_iri(n).into()),
-                                _ => Err(ZkSparqlError::InternalError(
-                                    "predicate must be IRI".to_owned(),
-                                )),
-                            }
-                        } else {
-                            match term {
-                                Term::NamedNode(n) => Ok(self.issue_nym_for_iri(n).into()),
-                                Term::Literal(l) => Ok(self.issue_nym_for_literal(l).into()),
-                                Term::BlankNode(_) => Ok(term.clone()),
-                                Term::Triple(_) => Err(ZkSparqlError::InternalError(
-                                    "stored VC must not contain a quoted triple".to_owned(),
-                                )),
-                            }
-                        };
-                        Ok((var.clone(), pseudonymized_term?))
-                    })
-                    .collect::<Result<HashMap<_, _>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()
-    }
-
-    pub fn pseudonymize_solutions(
-        &mut self,
-        solutions: Vec<HashMap<Variable, Term>>,
-        disclosed_variables: &[Variable],
-        predicate_variables: &HashSet<&Variable>,
-    ) -> Result<Vec<HashMap<Variable, Term>>, ZkSparqlError> {
-        let disclosed_variables: HashSet<_> = disclosed_variables.iter().collect();
-
-        solutions
-            .iter()
-            .map(|solution| {
-                solution
-                    .iter()
-                    .map(|(var, term)| {
-                        let pseudonymized_term = if var.as_str().starts_with(VC_VARIABLE_PREFIX) {
-                            match term {
-                                Term::BlankNode(b)
-                                    if b.as_str().ends_with(SUBJECT_GRAPH_SUFFIX) =>
-                                {
-                                    Ok(Term::BlankNode(BlankNode::new(
-                                        &b.as_str()
-                                            [0..(b.as_str().len() - SUBJECT_GRAPH_SUFFIX.len())],
-                                    )?))
-                                }
-                                _ => Err(ZkSparqlError::InternalError(
-                                    "stored VC graph name must be blank node".to_owned(),
                                 )),
                             }
                         } else if disclosed_variables.contains(var) {

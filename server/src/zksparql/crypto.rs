@@ -1041,7 +1041,7 @@ fn derive_proof_value(
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
     println!("revealed_and_unrevealed:\n{:#?}\n", revealed_and_unrevealed);
-    println!("proof values:{:?}", proof_values);
+    println!("proof values: {:?}", proof_values);
 
     // TODO: identify equivalent witnesses
 
