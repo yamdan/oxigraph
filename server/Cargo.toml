@@ -25,10 +25,8 @@ url = "2"
 oxiri = "0.2"
 flate2 = "1"
 rayon-core = "1"
-nanoid = "0.4"
-chrono = "0.4"
-rdf-canon = { git = "https://github.com/yamdan/rdf-canon-rust.git", version = "0.11.0" }
-proof_system = "0.21"
+rdf-canon = { git = "https://github.com/zkp-ld/rdf-canon.git", version = "0.11.0" }
+rdf-proofs = { git = "https://github.com/zkp-ld/rdf-proofs.git", version = "0.2.0", features = ["rdf-star"]}
 
 [dev-dependencies]
 assert_cmd = "2"

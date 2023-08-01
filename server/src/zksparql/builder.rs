@@ -46,7 +46,7 @@ impl From<&VerifiableCredential> for Vec<Quad> {
     }
 }
 
-impl From<&VerifiableCredential> for super::crypto::VerifiableCredential {
+impl From<&VerifiableCredential> for rdf_proofs::vc::VerifiableCredential {
     fn from(value: &VerifiableCredential) -> Self {
         let mut document = Graph::from_iter(
             value

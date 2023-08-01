@@ -1,6 +1,5 @@
 mod builder;
 mod context;
-mod crypto;
 mod error;
 mod nymizer;
 mod parser;
@@ -12,7 +11,6 @@ use crate::{
             build_disclosed_subjects, build_extended_fetch_query, build_extended_prove_query,
             get_verifiable_credential, pseudonymize_metadata_and_proofs, TriplePatternWithGraphVar,
         },
-        crypto::{derive_proof, DeriveProofError, VcWithDisclosed},
         error::ZkSparqlError,
         nymizer::Pseudonymizer,
         parser::parse_zk_query,
@@ -26,6 +24,10 @@ use oxigraph::{
     store::Store,
 };
 use oxrdf::{Literal, Variable};
+use rdf_proofs::{
+    error::DeriveProofError,
+    prover::{derive_proof, VcWithDisclosed},
+};
 use sparesults::QueryResultsSerializer;
 use std::{
     collections::{HashMap, HashSet},

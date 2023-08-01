@@ -1,10 +1,10 @@
-use super::crypto::DeriveProofError;
 use crate::{bad_request, HttpError};
 
 use oxigraph::{sparql::EvaluationError, store::StorageError};
 use oxiri::IriParseError;
 use oxrdf::{BlankNode, BlankNodeIdParseError, NamedNode, VariableNameParseError};
 use rdf_canon::CanonicalizationError;
+use rdf_proofs::error::DeriveProofError;
 use spargebra::ParseError;
 
 pub enum ZkSparqlError {
