@@ -13,7 +13,8 @@ use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
     BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphName, GraphNameRef, LiteralRef,
-    NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef, Triple,
+    NamedNode, NamedNodeRef, NamedOrBlankNode, NamedOrBlankNodeRef, Quad, QuadRef, Subject, Term,
+    TermRef, Triple,
 };
 use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
@@ -252,8 +253,8 @@ impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
 
     fn try_from(value: TermRef<'a>) -> Result<Self, Self::Error> {
         match value {
-            TermRef::NamedNode(n) => Ok(OrderedGraphNameRef(n.into())),
-            TermRef::BlankNode(n) => Ok(OrderedGraphNameRef(n.into())),
+            TermRef::NamedNode(n) => Ok(Self(n.into())),
+            TermRef::BlankNode(n) => Ok(Self(n.into())),
             _ => Err(DeriveProofError::InternalError(
                 "invalid graph name: graph name must not be literal or triple".to_string(),
             )),
@@ -263,6 +264,25 @@ impl<'a> TryFrom<TermRef<'a>> for OrderedGraphNameRef<'a> {
 impl std::fmt::Display for OrderedGraphNameRef<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+/// `oxrdf::triple::GraphNameRef` with string-based ordering
+#[derive(Eq, PartialEq, Clone, Debug)]
+struct OrderedNamedOrBlankNodeRef<'a>(NamedOrBlankNodeRef<'a>);
+impl Ord for OrderedNamedOrBlankNodeRef<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.to_string().cmp(&other.0.to_string())
+    }
+}
+impl PartialOrd for OrderedNamedOrBlankNodeRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.to_string().partial_cmp(&other.0.to_string())
+    }
+}
+impl<'a> From<NamedOrBlankNodeRef<'a>> for OrderedNamedOrBlankNodeRef<'a> {
+    fn from(value: NamedOrBlankNodeRef<'a>) -> Self {
+        Self(value)
     }
 }
 
@@ -1014,26 +1034,30 @@ fn derive_proof_value(
         })
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
 
-    // identify revealed messages and unrevealed messages
+    // identify disclosed and undisclosed terms
     let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
         .iter()
         .zip(original_vc_triples)
+        .enumerate()
         .map(
             |(
-                DisclosedVerifiableCredential {
-                    document: disclosed_document,
-                    proof: disclosed_proof,
-                },
-                VerifiableCredentialTriples {
-                    document: original_document,
-                    proof: original_proof,
-                },
+                i,
+                (
+                    DisclosedVerifiableCredential {
+                        document: disclosed_document,
+                        proof: disclosed_proof,
+                    },
+                    VerifiableCredentialTriples {
+                        document: original_document,
+                        proof: original_proof,
+                    },
+                ),
             )| {
-                let document_messages =
-                    get_disclosed_and_undisclosed_terms(disclosed_document, &original_document)?;
-                let proof_messages =
-                    get_disclosed_and_undisclosed_terms(disclosed_proof, &original_proof)?;
-                Ok((document_messages, proof_messages))
+                let document_terms =
+                    get_disclosed_and_undisclosed_terms(disclosed_document, &original_document, i)?;
+                let proof_terms =
+                    get_disclosed_and_undisclosed_terms(disclosed_proof, &original_proof, i)?;
+                Ok((document_terms, proof_terms))
             },
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
@@ -1056,59 +1080,100 @@ struct DisclosedAndUndisclosedTerms {
     undisclosed: BTreeMap<usize, Term>,
 }
 
-fn get_disclosed_and_undisclosed_terms(
-    disclosed_triples: &BTreeMap<usize, Option<Triple>>,
+fn get_disclosed_and_undisclosed_terms<'a>(
+    disclosed_triples: &'a BTreeMap<usize, Option<Triple>>,
     original_triples: &Vec<Triple>,
-) -> Result<DisclosedAndUndisclosedTerms, DeriveProofError> {
+    vc_index: usize,
+) -> Result<
+    (
+        DisclosedAndUndisclosedTerms,
+        BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+    ),
+    DeriveProofError,
+> {
     let mut disclosed_terms = BTreeMap::<usize, Term>::new();
     let mut undisclosed_terms = BTreeMap::<usize, Term>::new();
+    let mut equivs = BTreeMap::<OrderedNamedOrBlankNodeRef, Vec<(usize, usize)>>::new();
 
-    for (i, disclosed_triple) in disclosed_triples {
+    for (j, disclosed_triple) in disclosed_triples {
+        let subject_index = 3 * j;
+        let predicate_index = 3 * j + 1;
+        let object_index = 3 * j + 2;
+
         let original = original_triples
-            .get(*i)
+            .get(*j)
             .ok_or(DeriveProofError::DeriveProofValueError)?
             .clone();
+
         match disclosed_triple {
             Some(triple) => {
                 match &triple.subject {
-                    Subject::BlankNode(_) => {
-                        undisclosed_terms.insert(3 * i, original.subject.into())
+                    Subject::BlankNode(b) => {
+                        undisclosed_terms.insert(subject_index, original.subject.into());
+                        equivs
+                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()).into())
+                            .or_default()
+                            .push((vc_index, subject_index));
                     }
                     Subject::NamedNode(n) if is_nym(n) => {
-                        undisclosed_terms.insert(3 * i, original.subject.into())
+                        undisclosed_terms.insert(subject_index, original.subject.into());
+                        equivs
+                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()).into())
+                            .or_default()
+                            .push((vc_index, subject_index));
                     }
-                    Subject::NamedNode(_) => disclosed_terms.insert(3 * i, original.subject.into()),
+                    Subject::NamedNode(_) => {
+                        disclosed_terms.insert(subject_index, original.subject.into());
+                    }
                     Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
+
                 if is_nym(&triple.predicate) {
-                    undisclosed_terms.insert(3 * i + 1, original.predicate.into())
+                    undisclosed_terms.insert(predicate_index, original.predicate.into());
+                    equivs
+                        .entry(NamedOrBlankNodeRef::NamedNode((&triple.predicate).into()).into())
+                        .or_default()
+                        .push((vc_index, predicate_index));
                 } else {
-                    disclosed_terms.insert(3 * i + 1, original.predicate.into())
+                    disclosed_terms.insert(predicate_index, original.predicate.into());
                 };
+
                 match &triple.object {
-                    Term::BlankNode(_) => {
-                        undisclosed_terms.insert(3 * i + 2, original.object.into())
+                    Term::BlankNode(b) => {
+                        undisclosed_terms.insert(object_index, original.object.into());
+                        equivs
+                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()).into())
+                            .or_default()
+                            .push((vc_index, object_index));
                     }
                     Term::NamedNode(n) if is_nym(n) => {
-                        undisclosed_terms.insert(3 * i + 2, original.object.into())
+                        undisclosed_terms.insert(object_index, original.object.into());
+                        equivs
+                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()).into())
+                            .or_default()
+                            .push((vc_index, object_index));
                     }
                     Term::NamedNode(_) | Term::Literal(_) => {
-                        disclosed_terms.insert(3 * i + 2, original.object.into())
+                        disclosed_terms.insert(object_index, original.object.into());
                     }
                     Term::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
             }
+
             None => {
-                undisclosed_terms.insert(3 * i, original.subject.into());
-                undisclosed_terms.insert(3 * i + 1, original.predicate.into());
-                undisclosed_terms.insert(3 * i + 2, original.object.into());
+                undisclosed_terms.insert(subject_index, original.subject.into());
+                undisclosed_terms.insert(predicate_index, original.predicate.into());
+                undisclosed_terms.insert(object_index, original.object.into());
             }
         }
     }
-    Ok(DisclosedAndUndisclosedTerms {
-        disclosed: disclosed_terms,
-        undisclosed: undisclosed_terms,
-    })
+    Ok((
+        DisclosedAndUndisclosedTerms {
+            disclosed: disclosed_terms,
+            undisclosed: undisclosed_terms,
+        },
+        equivs,
+    ))
 }
 
 fn is_nym(node: &NamedNode) -> bool {
