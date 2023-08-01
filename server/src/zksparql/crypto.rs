@@ -1053,11 +1053,16 @@ fn derive_proof_value(
                     },
                 ),
             )| {
-                let document_terms =
+                let (document_terms, document_equivs) =
                     get_disclosed_and_undisclosed_terms(disclosed_document, &original_document, i)?;
-                let proof_terms =
+                let (proof_terms, proof_equivs) =
                     get_disclosed_and_undisclosed_terms(disclosed_proof, &original_proof, i)?;
-                Ok((document_terms, proof_terms))
+                Ok(DisclosedAndUndisclosed {
+                    document_terms,
+                    proof_terms,
+                    document_equivs,
+                    proof_equivs,
+                })
             },
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
@@ -1067,10 +1072,31 @@ fn derive_proof_value(
     );
     println!("proof values: {:?}", proof_values);
 
-    // TODO: identify equivalent witnesses
+    // identify equivalent witnesses
+    let mut equivs = Equivs {
+        document: BTreeMap::new(),
+        proof: BTreeMap::new(),
+    };
+    for DisclosedAndUndisclosed {
+        document_equivs,
+        proof_equivs,
+        ..
+    } in disclosed_and_undisclosed_terms
+    {
+        for (k, v) in document_equivs {
+            equivs
+                .document
+                .entry(k.into())
+                .or_default()
+                .extend(v.clone());
+        }
+        for (k, v) in proof_equivs {
+            equivs.proof.entry(k.into()).or_default().extend(v.clone());
+        }
+    }
+    println!("equivs:\n{:#?}\n", equivs);
 
     // TODO: generate proofs
-
     todo!();
 }
 
@@ -1080,6 +1106,20 @@ struct DisclosedAndUndisclosedTerms {
     undisclosed: BTreeMap<usize, Term>,
 }
 
+#[derive(Debug)]
+struct DisclosedAndUndisclosed<'a> {
+    document_terms: DisclosedAndUndisclosedTerms,
+    proof_terms: DisclosedAndUndisclosedTerms,
+    document_equivs: HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+    proof_equivs: HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+}
+
+#[derive(Debug)]
+struct Equivs<'a> {
+    document: BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+    proof: BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+}
+
 fn get_disclosed_and_undisclosed_terms<'a>(
     disclosed_triples: &'a BTreeMap<usize, Option<Triple>>,
     original_triples: &Vec<Triple>,
@@ -1087,13 +1127,13 @@ fn get_disclosed_and_undisclosed_terms<'a>(
 ) -> Result<
     (
         DisclosedAndUndisclosedTerms,
-        BTreeMap<OrderedNamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
+        HashMap<NamedOrBlankNodeRef<'a>, Vec<(usize, usize)>>,
     ),
     DeriveProofError,
 > {
     let mut disclosed_terms = BTreeMap::<usize, Term>::new();
     let mut undisclosed_terms = BTreeMap::<usize, Term>::new();
-    let mut equivs = BTreeMap::<OrderedNamedOrBlankNodeRef, Vec<(usize, usize)>>::new();
+    let mut equivs = HashMap::<NamedOrBlankNodeRef, Vec<(usize, usize)>>::new();
 
     for (j, disclosed_triple) in disclosed_triples {
         let subject_index = 3 * j;
@@ -1111,14 +1151,14 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Subject::BlankNode(b) => {
                         undisclosed_terms.insert(subject_index, original.subject.into());
                         equivs
-                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()).into())
+                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()))
                             .or_default()
                             .push((vc_index, subject_index));
                     }
                     Subject::NamedNode(n) if is_nym(n) => {
                         undisclosed_terms.insert(subject_index, original.subject.into());
                         equivs
-                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()).into())
+                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()))
                             .or_default()
                             .push((vc_index, subject_index));
                     }
@@ -1131,7 +1171,7 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                 if is_nym(&triple.predicate) {
                     undisclosed_terms.insert(predicate_index, original.predicate.into());
                     equivs
-                        .entry(NamedOrBlankNodeRef::NamedNode((&triple.predicate).into()).into())
+                        .entry(NamedOrBlankNodeRef::NamedNode((&triple.predicate).into()))
                         .or_default()
                         .push((vc_index, predicate_index));
                 } else {
@@ -1142,14 +1182,14 @@ fn get_disclosed_and_undisclosed_terms<'a>(
                     Term::BlankNode(b) => {
                         undisclosed_terms.insert(object_index, original.object.into());
                         equivs
-                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()).into())
+                            .entry(NamedOrBlankNodeRef::BlankNode(b.into()))
                             .or_default()
                             .push((vc_index, object_index));
                     }
                     Term::NamedNode(n) if is_nym(n) => {
                         undisclosed_terms.insert(object_index, original.object.into());
                         equivs
-                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()).into())
+                            .entry(NamedOrBlankNodeRef::NamedNode(n.into()))
                             .or_default()
                             .push((vc_index, object_index));
                     }
