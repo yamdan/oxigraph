@@ -35,9 +35,9 @@ use url::form_urlencoded;
 
 const SUBJECT_GRAPH_SUFFIX: &str = ".subject";
 const VC_VARIABLE_PREFIX: &str = "__vc";
-const PSEUDONYMOUS_IRI_PREFIX: &str = "urn:nym:";
-const CRYPTOSUITE_FOR_VP: &str = "bbs-term-proof-2023";
 const VP_VARIABLE: &str = "__vp";
+const NYM_IRI_PREFIX: &str = "urn:nym:";
+const CRYPTOSUITE_FOR_VP: &str = "bbs-term-proof-2023";
 
 pub(crate) fn configure_and_evaluate_zksparql_query(
     store: &Store,

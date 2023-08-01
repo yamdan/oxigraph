@@ -11,7 +11,7 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> <http
 ## metadata
 <http://example.org/vcred/00> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:john> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
-<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer1> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
+<http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer0> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#issuanceDate> "2022-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
 <http://example.org/vcred/00> <https://www.w3.org/2018/credentials#expirationDate> "2025-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc0> .
 <http://example.org/vcred/00> <https://w3id.org/security#proof> _:vc0.proof <https://zkp-ld.org/.well-known/genid/graph/vc0> .
@@ -20,8 +20,8 @@ _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/sec
 _:6b92db <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc0.proof .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc0.proof .
 _:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc0.proof .
-_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> _:vc0.proof .
-_:6b92db <https://w3id.org/security#proofValue> "mA9oePddXRZK1dTCt9iJOAPd9WabAW0rThUIP6RoLbUdPG1L5pPnRUG9BBpnFuzAZk9X1b6jApMKYEdL4Dn7/FYWZeJckHxW9vz+UVH1S7IfQDGkcW3zuR3eEVPpOot/KY1akOy29JVcl2rkkS5UVw==" _:vc0.proof .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls-key1> _:vc0.proof .
+_:6b92db <https://w3id.org/security#proofValue> "PROOF_VALUE_0" _:vc0.proof .
 
 # <https://zkp-ld.org/.well-known/genid/graph/vc1>
 ## subject
@@ -45,7 +45,7 @@ _:08df04 <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc1.proof
 _:08df04 <http://purl.org/dc/terms/created> "2023-02-03T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc1.proof .
 _:08df04 <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc1.proof .
 _:08df04 <https://w3id.org/security#verificationMethod> <did:example:issuer1#bbs-bls-key1> _:vc1.proof .
-_:08df04 <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" _:vc1.proof .
+_:08df04 <https://w3id.org/security#proofValue> "PROOF_VALUE_1" _:vc1.proof .
 
 # <https://zkp-ld.org/.well-known/genid/graph/vc2>
 ## subject
@@ -59,7 +59,7 @@ _:eae1d5 <http://example.org/vocab/vaccine> <http://example.org/vaccine/a> <http
 ## metadata
 <http://example.org/vcred/02> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#credentialSubject> <did:example:jane> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
-<http://example.org/vcred/02> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
+<http://example.org/vcred/02> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer2> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#issuanceDate> "2022-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
 <http://example.org/vcred/02> <https://www.w3.org/2018/credentials#expirationDate> "2025-04-04T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc2> .
 <http://example.org/vcred/02> <https://w3id.org/security#proof> _:vc2.proof <https://zkp-ld.org/.well-known/genid/graph/vc2> .
@@ -68,8 +68,8 @@ _:ec3f0d <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/sec
 _:ec3f0d <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc2.proof .
 _:ec3f0d <http://purl.org/dc/terms/created> "2023-05-05T09:46:55Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc2.proof .
 _:ec3f0d <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc2.proof .
-_:ec3f0d <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> _:vc2.proof .
-_:ec3f0d <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSFiL7uERojkUNS7K3D1HUNVLlwfAOVvruHIU5PX0qbq1fW7vEz2KjQz8V987tzyNCMBfBv/uJ9/ovQf1iLSF+l8qAwiHWoQcflsBWEB2oBljfaRAFAGnZg1NA==" _:vc2.proof .
+_:ec3f0d <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> _:vc2.proof .
+_:ec3f0d <https://w3id.org/security#proofValue> "PROOF_VALUE_2" _:vc2.proof .
 
 # <https://zkp-ld.org/.well-known/genid/graph/vc3>
 ## subject
@@ -80,7 +80,7 @@ _:ec3f0d <https://w3id.org/security#proofValue> "srl0BzpD2zCy9iV6beV82zU+F6WnBSF
 ## metadata
 <http://example.org/vicred/a> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/a> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
-<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer2> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
+<http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
 <http://example.org/vicred/a> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc3> .
 <http://example.org/vicred/a> <https://w3id.org/security#proof> _:vc3.proof <https://zkp-ld.org/.well-known/genid/graph/vc3> .
@@ -89,8 +89,8 @@ _:wTnTxH <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/sec
 _:wTnTxH <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc3.proof .
 _:wTnTxH <http://purl.org/dc/terms/created> "2023-02-03T09:49:25Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc3.proof .
 _:wTnTxH <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc3.proof .
-_:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer2#bbs-bls-key1> _:vc3.proof .
-_:wTnTxH <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" _:vc3.proof .
+_:wTnTxH <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> _:vc3.proof .
+_:wTnTxH <https://w3id.org/security#proofValue> "PROOF_VALUE_3" _:vc3.proof .
 
 # <https://zkp-ld.org/.well-known/genid/graph/vc4>
 ## subject
@@ -101,7 +101,7 @@ _:wTnTxH <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcF
 ## metadata
 <http://example.org/vicred/b> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://www.w3.org/2018/credentials#VerifiableCredential> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
 <http://example.org/vicred/b> <https://www.w3.org/2018/credentials#credentialSubject> <http://example.org/vaccine/b> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
-<http://example.org/vicred/b> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer3> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
+<http://example.org/vicred/b> <https://www.w3.org/2018/credentials#issuer> <did:example:issuer4> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
 <http://example.org/vicred/b> <https://www.w3.org/2018/credentials#issuanceDate> "2020-01-01T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
 <http://example.org/vicred/b> <https://www.w3.org/2018/credentials#expirationDate> "2023-12-31T00:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> <https://zkp-ld.org/.well-known/genid/graph/vc4> .
 <http://example.org/vicred/b> <https://w3id.org/security#proof> _:vc4.proof <https://zkp-ld.org/.well-known/genid/graph/vc4> .
@@ -110,5 +110,5 @@ _:akhisv <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/sec
 _:akhisv <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc4.proof .
 _:akhisv <http://purl.org/dc/terms/created> "2023-03-03T11:22:33Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc4.proof .
 _:akhisv <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc4.proof .
-_:akhisv <https://w3id.org/security#verificationMethod> <did:example:issuer3#bbs-bls-key1> _:vc4.proof .
-_:akhisv <https://w3id.org/security#proofValue> "r3FbeXqzeJe0pSIK3fxwmXXRYOcphcFmF5wSPfo96FdZCch4ZtiwjWH015dZsqvTM2kraU3ah7Dt/bLfgnfYZCrU3blXeROPceBV8P7vJJMAlT9MABRzWWDbaRe/weL+kMWEDNRxcpIXuFPt09WtQg==" _:vc4.proof .
+_:akhisv <https://w3id.org/security#verificationMethod> <did:example:issuer4#bbs-bls-key1> _:vc4.proof .
+_:akhisv <https://w3id.org/security#proofValue> "PROOF_VALUE_4" _:vc4.proof .

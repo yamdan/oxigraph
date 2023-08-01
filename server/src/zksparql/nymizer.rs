@@ -1,5 +1,5 @@
 use super::{
-    error::ZkSparqlError, PSEUDONYMOUS_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
+    error::ZkSparqlError, NYM_IRI_PREFIX, SUBJECT_GRAPH_SUFFIX, VC_VARIABLE_PREFIX,
 };
 
 use oxigraph::sparql::QuerySolutionIter;
@@ -34,7 +34,7 @@ impl Pseudonymizer {
             .or_insert(
                 NamedNode::new_unchecked(format!(
                     "{}{}",
-                    PSEUDONYMOUS_IRI_PREFIX,
+                    NYM_IRI_PREFIX,
                     BlankNode::default().as_str()
                 ))
                 .into(),

@@ -12,9 +12,8 @@ use oxiri::IriParseError;
 use oxrdf::{
     dataset::GraphView,
     vocab::{rdf::TYPE, xsd},
-    BlankNode, BlankNodeIdParseError, BlankNodeRef, Dataset, Graph, GraphName, GraphNameRef,
-    LiteralRef, NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef,
-    Triple,
+    BlankNode, BlankNodeIdParseError, Dataset, Graph, GraphName, GraphNameRef, LiteralRef,
+    NamedNode, NamedNodeRef, NamedOrBlankNode, Quad, QuadRef, Subject, Term, TermRef, Triple,
 };
 use proof_system::{
     statement::bbs_plus::PoKBBSSignatureG1 as PoKBBSSignatureG1Stmt,
@@ -22,6 +21,8 @@ use proof_system::{
 };
 use rdf_canon::{issue, relabel, serialize, CanonicalizationError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+const NYM_IRI_PREFIX: &str = "urn:nym:";
 
 // TODO: fix name
 #[derive(Debug)]
@@ -273,17 +274,9 @@ struct StatementIndexMap {
     proof_len: usize,
 }
 
-#[derive(Debug)]
-struct StatementIndexMapWithProofValue {
-    index_map: StatementIndexMap,
-    proof_value: String,
-}
-
 type OrderedGraphViews<'a> = BTreeMap<OrderedGraphNameRef<'a>, GraphView<'a>>;
 type OrderedVerifiableCredentialGraphViews<'a> =
     BTreeMap<OrderedGraphNameRef<'a>, VerifiableCredentialView<'a>>;
-type OrderedCanonicalVerifiableCredentialTriples<'a> =
-    BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>;
 
 pub fn derive_proof(
     vcs: &Vec<VcWithDisclosed>,
@@ -307,58 +300,17 @@ pub fn derive_proof(
     // TODO:
     // check: verify VCs
 
-    // get original VCs
-    let original_vcs = vcs
-        .iter()
-        .map(|VcWithDisclosed { vc, .. }| vc)
-        .collect::<Vec<_>>();
-
-    // canonicalize original VCs
-    let c14n_original_vcs = canonicalize_original_vcs(&original_vcs)?;
-    println!("canonicalized original VC graphs:");
-    for c14n_original_vc in &c14n_original_vcs {
-        println!(
-            "document:\n{}",
-            c14n_original_vc
-                .document
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "document issued identifiers map:\n{:#?}\n",
-            c14n_original_vc.document_issued_identifiers_map
-        );
-        println!(
-            "proof:\n{}",
-            c14n_original_vc
-                .proof
-                .iter()
-                .map(|t| format!("{} .\n", t.to_string()))
-                .reduce(|l, r| format!("{}{}", l, r))
-                .unwrap()
-        );
-        println!(
-            "proof issued identifiers map:\n{:#?}\n",
-            c14n_original_vc.proof_issued_identifiers_map
-        );
-    }
-
-    // remove `proofValue`s from disclosed VCs
+    // get disclosed VCs, where `proofValue` is removed if any
     let disclosed_vcs = vcs
         .iter()
-        .map(
-            |VcWithDisclosed {
-                 disclosed: VerifiableCredential { document, proof },
-                 ..
-             }| {
-                VerifiableCredential::new(
-                    Graph::from_iter(document),
-                    Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
-                )
-            },
-        )
+        .map(|VcWithDisclosed { disclosed, .. }| disclosed)
+        .map(|VerifiableCredential { document, proof }| {
+            VerifiableCredential::new(
+                // clone document and proof without `proofValue`
+                Graph::from_iter(document),
+                Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
+            )
+        })
         .collect();
 
     // build VP (without proof yet) based on disclosed VCs
@@ -371,8 +323,36 @@ pub fn derive_proof(
     println!("issued identifiers map:\n{:#?}\n", c14n_map_for_disclosed);
     println!("canonicalized VP:\n{}", serialize(&canonicalized_vp));
 
-    // compose extended deanonymization map with issued identifiers map for original VC graphs
-    let mut c14n_map_for_original_vc = HashMap::<String, String>::new();
+    // extract `proofValue`s from original VCs
+    let (original_vcs, proof_values): (Vec<_>, Vec<_>) = vcs
+        .iter()
+        .map(|VcWithDisclosed { vc, .. }| vc)
+        .map(|VerifiableCredential { document, proof }| {
+            // get `proofValue`s from original VCs
+            let proof_value_triple = proof
+                .iter()
+                .find(|t| t.predicate == PROOF_VALUE)
+                .ok_or(DeriveProofError::VCWithoutProofValue)?;
+            let proof_value = match proof_value_triple.object {
+                TermRef::Literal(l) => Ok(l.value()),
+                _ => Err(DeriveProofError::VCWithInvalidProofValue),
+            }?;
+            Ok((
+                VerifiableCredential::new(
+                    // clone document and proof without `proofValue`
+                    Graph::from_iter(document),
+                    Graph::from_iter(proof.iter().filter(|t| t.predicate != PROOF_VALUE)),
+                ),
+                proof_value,
+            ))
+        })
+        .collect::<Result<Vec<_>, DeriveProofError>>()?
+        .into_iter()
+        .unzip();
+
+    // canonicalize original VCs
+    let c14n_original_vcs = canonicalize_original_vcs(&original_vcs)?;
+    let mut c14n_original_vcs_map = HashMap::<String, String>::new();
     for CanonicalVerifiableCredentialTriples {
         document_issued_identifiers_map,
         proof_issued_identifiers_map,
@@ -380,27 +360,24 @@ pub fn derive_proof(
     } in &c14n_original_vcs
     {
         for (k, v) in document_issued_identifiers_map {
-            if c14n_map_for_original_vc.contains_key(k) {
+            if c14n_original_vcs_map.contains_key(k) {
                 return Err(DeriveProofError::BlankNodeCollisionError);
             } else {
-                c14n_map_for_original_vc.insert(k.to_string(), v.to_string());
+                c14n_original_vcs_map.insert(k.to_string(), v.to_string());
             }
         }
         for (k, v) in proof_issued_identifiers_map {
-            if c14n_map_for_original_vc.contains_key(k) {
+            if c14n_original_vcs_map.contains_key(k) {
                 return Err(DeriveProofError::BlankNodeCollisionError);
             } else {
-                c14n_map_for_original_vc.insert(k.to_string(), v.to_string());
+                c14n_original_vcs_map.insert(k.to_string(), v.to_string());
             }
         }
     }
 
     // construct extended deanonymization map
-    let extended_deanon_map = extend_deanon_map(
-        deanon_map,
-        &c14n_map_for_disclosed,
-        &c14n_map_for_original_vc,
-    )?;
+    let extended_deanon_map =
+        extend_deanon_map(deanon_map, &c14n_map_for_disclosed, &c14n_original_vcs_map)?;
     println!("extended deanon map:");
     for (f, t) in &extended_deanon_map {
         println!("{}: {}", f.to_string(), t.to_string());
@@ -428,14 +405,15 @@ pub fn derive_proof(
         println!("{}", vc.proof);
     }
 
-    // associate original VCs with canonicalized graph names of disclosed VCs
-    let c14n_original_vc_triples: OrderedCanonicalVerifiableCredentialTriples =
-        reassociate_vc_with_disclosed(
-            &c14n_original_vcs,
-            &c14n_disclosed_vc_graphs,
-            &extended_deanon_map,
-            &vc_graph_names,
-        )?;
+    // reorder the original VCs and proof values
+    // according to the order of canonicalized graph names of disclosed VCs
+    let (c14n_original_vc_triples, ordered_proof_values) = reorder_vcs(
+        &c14n_original_vcs,
+        &proof_values,
+        &c14n_disclosed_vc_graphs,
+        &extended_deanon_map,
+        &vc_graph_names,
+    )?;
 
     // assert the keys of two VC graphs are equivalent
     if !c14n_original_vc_triples
@@ -447,11 +425,22 @@ pub fn derive_proof(
         ));
     }
 
-    // convert graphs to triples
-    let c14n_original_vc_triples_vec = graph_to_triples(c14n_original_vc_triples);
-    let c14n_disclosed_vc_triples_vec = graph_to_triples(c14n_disclosed_vc_graphs);
+    // convert to Vecs
+    let original_vec = c14n_original_vc_triples
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    let disclosed_vec = c14n_disclosed_vc_graphs
+        .into_iter()
+        .map(|(_, v)| v.into())
+        .collect::<Vec<VerifiableCredentialTriples>>();
+    let proof_values_vec = ordered_proof_values
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect::<Vec<_>>();
+
     println!("canonicalized original VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &c14n_original_vc_triples_vec {
+    for VerifiableCredentialTriples { document, proof } in &original_vec {
         println!(
             "document:\n{}",
             document
@@ -470,7 +459,7 @@ pub fn derive_proof(
         );
     }
     println!("canonicalized disclosed VC graphs (sorted):");
-    for VerifiableCredentialTriples { document, proof } in &c14n_disclosed_vc_triples_vec {
+    for VerifiableCredentialTriples { document, proof } in &disclosed_vec {
         println!(
             "document:\n{}",
             document
@@ -490,22 +479,12 @@ pub fn derive_proof(
     }
 
     // generate index map
-    let index_map_with_proof_values = gen_index_map_and_proof_values(
-        &c14n_original_vc_triples_vec,
-        &c14n_disclosed_vc_triples_vec,
-        &extended_deanon_map,
-    )?;
-    println!(
-        "index_map_with_proof_values:\n{:#?}\n",
-        index_map_with_proof_values
-    );
+    let index_map = gen_index_map(&original_vec, &disclosed_vec, &extended_deanon_map)?;
+    println!("index_map:\n{:#?}\n", index_map);
 
     // derive proof value
-    let derived_proof_value = derive_proof_value(
-        c14n_original_vc_triples_vec,
-        c14n_disclosed_vc_triples_vec,
-        index_map_with_proof_values,
-    )?;
+    let derived_proof_value =
+        derive_proof_value(original_vec, disclosed_vec, proof_values_vec, index_map)?;
 
     // TODO: add derived proof value to VP
 
@@ -621,7 +600,7 @@ fn deanonymize_term(
 }
 
 fn canonicalize_original_vcs(
-    original_vcs: &Vec<&VerifiableCredential>,
+    original_vcs: &Vec<VerifiableCredential>,
 ) -> Result<Vec<CanonicalVerifiableCredentialTriples>, DeriveProofError> {
     original_vcs
         .iter()
@@ -767,12 +746,12 @@ fn dataset_into_ordered_graphs(dataset: &Dataset) -> OrderedGraphViews {
 fn extend_deanon_map(
     deanon_map: &HashMap<NamedOrBlankNode, Term>,
     issued_identifiers_map: &HashMap<String, String>,
-    c14n_map_for_original_vc: &HashMap<String, String>,
+    c14n_original_vcs_map: &HashMap<String, String>,
 ) -> Result<HashMap<NamedOrBlankNode, Term>, DeriveProofError> {
     let mut res = issued_identifiers_map
         .into_iter()
         .map(|(bnid, cnid)| {
-            let mapped_bnid = match c14n_map_for_original_vc.get(bnid) {
+            let mapped_bnid = match c14n_original_vcs_map.get(bnid) {
                 Some(v) => v,
                 None => bnid,
             };
@@ -838,62 +817,63 @@ fn decompose_vp<'a>(vp: &'a Dataset) -> Result<VpGraphs<'a>, DeriveProofError> {
     })
 }
 
-fn reassociate_vc_with_disclosed<'a>(
+fn reorder_vcs<'a>(
     c14n_original_vcs: &'a Vec<CanonicalVerifiableCredentialTriples>,
+    proof_values: &'a Vec<&str>,
     c14n_disclosed_vc_graphs: &OrderedVerifiableCredentialGraphViews<'a>,
     extended_deanon_map: &'a HashMap<NamedOrBlankNode, Term>,
     vc_graph_names: &Vec<BlankNode>,
-) -> Result<OrderedCanonicalVerifiableCredentialTriples<'a>, DeriveProofError> {
-    c14n_disclosed_vc_graphs
-        .keys()
-        .map(|k| {
-            let vc_graph_name_c14n: &GraphNameRef = k.into();
-            let vc_graph_name: &BlankNodeRef = match vc_graph_name_c14n {
-                GraphNameRef::BlankNode(n) => Ok(n),
+) -> Result<
+    (
+        BTreeMap<OrderedGraphNameRef<'a>, &'a CanonicalVerifiableCredentialTriples>,
+        BTreeMap<OrderedGraphNameRef<'a>, &'a str>,
+    ),
+    DeriveProofError,
+> {
+    let mut ordered_vcs = BTreeMap::new();
+    let mut ordered_proof_values = BTreeMap::new();
+
+    for k in c14n_disclosed_vc_graphs.keys() {
+        let vc_graph_name_c14n: &GraphNameRef = k.into();
+        let vc_graph_name = match vc_graph_name_c14n {
+            GraphNameRef::BlankNode(n) => match extended_deanon_map.get(&(*n).into()) {
+                Some(Term::BlankNode(n)) => Ok(n),
                 _ => Err(DeriveProofError::InternalError(
                     "invalid VC graph name".to_string(),
                 )),
-            }?;
-            let vc_graph_name = extended_deanon_map.get(&(*vc_graph_name).into()).ok_or(
-                DeriveProofError::InternalError("invalid VC graph name".to_string()),
-            )?;
-            let vc_graph_name = match vc_graph_name {
-                Term::BlankNode(n) => Ok(n),
-                _ => Err(DeriveProofError::InternalError(
-                    "invalid VC graph name".to_string(),
-                )),
-            }?;
-            let index = vc_graph_names
-                .iter()
-                .position(|v| v == vc_graph_name)
-                .ok_or(DeriveProofError::InternalError(
-                    "invalid VC index".to_string(),
-                ))?;
-            let vc = c14n_original_vcs
-                .get(index)
-                .ok_or(DeriveProofError::InternalError(
-                    "invalid VC index".to_string(),
-                ))?;
-            Ok((k.clone(), vc))
-        })
-        .collect::<Result<_, DeriveProofError>>()
+            },
+            _ => Err(DeriveProofError::InternalError(
+                "invalid VC graph name".to_string(),
+            )),
+        }?;
+        let index = vc_graph_names
+            .iter()
+            .position(|v| v == vc_graph_name)
+            .ok_or(DeriveProofError::InternalError(
+                "invalid VC index".to_string(),
+            ))?;
+        let vc = c14n_original_vcs
+            .get(index)
+            .ok_or(DeriveProofError::InternalError(
+                "invalid VC index".to_string(),
+            ))?;
+        let proof_value = proof_values
+            .get(index)
+            .ok_or(DeriveProofError::InternalError(
+                "invalid proof value index".to_string(),
+            ))?;
+        ordered_vcs.insert(k.clone(), vc);
+        ordered_proof_values.insert(k.clone(), proof_value.to_owned());
+    }
+
+    Ok((ordered_vcs, ordered_proof_values))
 }
 
-// convert original VC graphs and VC proof graphs into `Vec<Triple>`s
-fn graph_to_triples(
-    graphs: BTreeMap<OrderedGraphNameRef, impl Into<VerifiableCredentialTriples>>,
-) -> Vec<VerifiableCredentialTriples> {
-    graphs
-        .into_iter()
-        .map(|(_, view)| view.into())
-        .collect::<Vec<VerifiableCredentialTriples>>()
-}
-
-fn gen_index_map_and_proof_values(
+fn gen_index_map(
     c14n_original_vc_triples: &Vec<VerifiableCredentialTriples>,
     c14n_disclosed_vc_triples: &Vec<VerifiableCredentialTriples>,
     extended_deanon_map: &HashMap<NamedOrBlankNode, Term>,
-) -> Result<Vec<StatementIndexMapWithProofValue>, DeriveProofError> {
+) -> Result<Vec<StatementIndexMap>, DeriveProofError> {
     let mut c14n_disclosed_vc_triples_cloned = (*c14n_disclosed_vc_triples).clone();
 
     // deanonymize each disclosed VC triples, keeping their orders
@@ -964,23 +944,11 @@ fn gen_index_map_and_proof_values(
                     .collect::<Result<Vec<_>, _>>()?;
                 let document_len = original_document.len();
                 let proof_len = original_proof.len();
-                let proof_value = match &original_proof
-                    .iter()
-                    .find(|&t| t.predicate == PROOF_VALUE)
-                    .ok_or(DeriveProofError::VCWithoutProofValue)?
-                    .object
-                {
-                    Term::Literal(literal) => Ok(literal.value()),
-                    _ => Err(DeriveProofError::VCWithInvalidProofValue),
-                }?;
-                Ok(StatementIndexMapWithProofValue {
-                    index_map: StatementIndexMap {
-                        document_map,
-                        document_len,
-                        proof_map,
-                        proof_len,
-                    },
-                    proof_value: proof_value.to_string(),
+                Ok(StatementIndexMap {
+                    document_map,
+                    document_len,
+                    proof_map,
+                    proof_len,
                 })
             },
         )
@@ -992,11 +960,12 @@ fn gen_index_map_and_proof_values(
 fn derive_proof_value(
     original_vc_triples: Vec<VerifiableCredentialTriples>,
     disclosed_vc_triples: Vec<VerifiableCredentialTriples>,
-    index_map_with_proof_values: Vec<StatementIndexMapWithProofValue>,
+    proof_values: Vec<&str>,
+    index_map: Vec<StatementIndexMap>,
 ) -> Result<String, DeriveProofError> {
     // TODO: extract signature parameters and issuer public keys
 
-    // TODO: identify revealed messages and unrevealed messages
+    // reorder disclosed VC triples according to index map
     let reordered_disclosed_vc_triples = disclosed_vc_triples
         .iter()
         .enumerate()
@@ -1006,10 +975,9 @@ fn derive_proof_value(
                 proof_map,
                 document_len,
                 proof_len,
-            } = &index_map_with_proof_values
+            } = &index_map
                 .get(i)
-                .ok_or(DeriveProofError::DeriveProofValueError)?
-                .index_map;
+                .ok_or(DeriveProofError::DeriveProofValueError)?;
 
             let mut mapped_document = document
                 .iter()
@@ -1045,49 +1013,106 @@ fn derive_proof_value(
             })
         })
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
-    println!(
-        "reordered_disclosed_vc_triples:\n{:#?}\n",
-        reordered_disclosed_vc_triples
-    );
+
+    // identify revealed messages and unrevealed messages
+    let revealed_and_unrevealed = reordered_disclosed_vc_triples
+        .iter()
+        .zip(original_vc_triples)
+        .map(
+            |(
+                DisclosedVerifiableCredential {
+                    document: disclosed_document,
+                    proof: disclosed_proof,
+                },
+                VerifiableCredentialTriples {
+                    document: original_document,
+                    proof: original_proof,
+                },
+            )| {
+                let document_messages =
+                    get_revealed_and_unrevealed_messages(disclosed_document, &original_document)?;
+                let proof_messages =
+                    get_revealed_and_unrevealed_messages(disclosed_proof, &original_proof)?;
+                Ok(RevealedDocumentAndProof {
+                    document: document_messages,
+                    proof: proof_messages,
+                })
+            },
+        )
+        .collect::<Result<Vec<_>, DeriveProofError>>()?;
+    println!("revealed_and_unrevealed:\n{:#?}\n", revealed_and_unrevealed);
+    println!("proof values:{:?}", proof_values);
 
     // TODO: identify equivalent witnesses
-    // reordered_disclosed_vc_triples
-    //     .iter()
-    //     .zip(original_vc_triples)
-    //     .map(
-    //         |(
-    //             DisclosedVerifiableCredential {
-    //                 document: disclosed_document,
-    //                 proof: disclosed_proof,
-    //             },
-    //             VerifiableCredentialTriples {
-    //                 document: original_document,
-    //                 proof: original_proof,
-    //             },
-    //         )| {
-    //             let mut revealed_messages = BTreeMap::new();
-    //             let mut unrevealed_messages = BTreeMap::new();
-    //             for (i, t) in disclosed_document {
-    //                 let original = original_document
-    //                     .get(*i)
-    //                     .ok_or(DeriveProofError::DeriveProofValueError)?;
-    //                 match t {
-    //                     Some(triple) => {
-    //                         match triple.subject {
-    //                             Subject::BlankNode(_) => unrevealed_messages.insert(3 * i, original.subject),
-    //                             Subject::NamedNode(_) => revealed_messages.insert(3 * i, original.subject),
-    //                             Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
-    //                        };
-    //                        revealed_messages
-    //                        ,
-    //                     None =>
-    //                     ,
-    //                 }
-    //             }
-    //         },
-    //     );
 
     // TODO: generate proofs
 
     todo!();
+}
+
+#[derive(Debug)]
+struct RevealedMessages {
+    revealed: BTreeMap<usize, Term>,
+    unrevealed: BTreeMap<usize, Term>,
+}
+
+#[derive(Debug)]
+struct RevealedDocumentAndProof {
+    document: RevealedMessages,
+    proof: RevealedMessages,
+}
+
+fn get_revealed_and_unrevealed_messages(
+    disclosed: &BTreeMap<usize, Option<Triple>>,
+    original: &Vec<Triple>,
+) -> Result<RevealedMessages, DeriveProofError> {
+    let mut revealed = BTreeMap::<usize, Term>::new();
+    let mut unrevealed = BTreeMap::<usize, Term>::new();
+
+    for (i, disclosed_triple) in disclosed {
+        let original = original
+            .get(*i)
+            .ok_or(DeriveProofError::DeriveProofValueError)?
+            .clone();
+        match disclosed_triple {
+            Some(triple) => {
+                match &triple.subject {
+                    Subject::BlankNode(_) => unrevealed.insert(3 * i, original.subject.into()),
+                    Subject::NamedNode(n) if is_nym(n) => {
+                        unrevealed.insert(3 * i, original.subject.into())
+                    }
+                    Subject::NamedNode(_) => revealed.insert(3 * i, original.subject.into()),
+                    Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
+                };
+                if is_nym(&triple.predicate) {
+                    unrevealed.insert(3 * i + 1, original.predicate.into())
+                } else {
+                    revealed.insert(3 * i + 1, original.predicate.into())
+                };
+                match &triple.object {
+                    Term::BlankNode(_) => unrevealed.insert(3 * i + 2, original.object.into()),
+                    Term::NamedNode(n) if is_nym(n) => {
+                        unrevealed.insert(3 * i + 2, original.object.into())
+                    }
+                    Term::NamedNode(_) | Term::Literal(_) => {
+                        revealed.insert(3 * i + 2, original.object.into())
+                    }
+                    Term::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
+                };
+            }
+            None => {
+                unrevealed.insert(3 * i, original.subject.into());
+                unrevealed.insert(3 * i + 1, original.predicate.into());
+                unrevealed.insert(3 * i + 2, original.object.into());
+            }
+        }
+    }
+    Ok(RevealedMessages {
+        revealed,
+        unrevealed,
+    })
+}
+
+fn is_nym(node: &NamedNode) -> bool {
+    node.as_str().starts_with(NYM_IRI_PREFIX)
 }
