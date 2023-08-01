@@ -963,7 +963,7 @@ fn derive_proof_value(
     proof_values: Vec<&str>,
     index_map: Vec<StatementIndexMap>,
 ) -> Result<String, DeriveProofError> {
-    // TODO: extract signature parameters and issuer public keys
+    // TODO: extract parameters and issuer public keys
 
     // reorder disclosed VC triples according to index map
     let reordered_disclosed_vc_triples = disclosed_vc_triples
@@ -1015,7 +1015,7 @@ fn derive_proof_value(
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
 
     // identify revealed messages and unrevealed messages
-    let revealed_and_unrevealed = reordered_disclosed_vc_triples
+    let disclosed_and_undisclosed_terms = reordered_disclosed_vc_triples
         .iter()
         .zip(original_vc_triples)
         .map(
@@ -1030,17 +1030,17 @@ fn derive_proof_value(
                 },
             )| {
                 let document_messages =
-                    get_revealed_and_unrevealed_messages(disclosed_document, &original_document)?;
+                    get_disclosed_and_undisclosed_terms(disclosed_document, &original_document)?;
                 let proof_messages =
-                    get_revealed_and_unrevealed_messages(disclosed_proof, &original_proof)?;
-                Ok(RevealedDocumentAndProof {
-                    document: document_messages,
-                    proof: proof_messages,
-                })
+                    get_disclosed_and_undisclosed_terms(disclosed_proof, &original_proof)?;
+                Ok((document_messages, proof_messages))
             },
         )
         .collect::<Result<Vec<_>, DeriveProofError>>()?;
-    println!("revealed_and_unrevealed:\n{:#?}\n", revealed_and_unrevealed);
+    println!(
+        "disclosed_and_undisclosed:\n{:#?}\n",
+        disclosed_and_undisclosed_terms
+    );
     println!("proof values: {:?}", proof_values);
 
     // TODO: identify equivalent witnesses
@@ -1051,65 +1051,63 @@ fn derive_proof_value(
 }
 
 #[derive(Debug)]
-struct RevealedMessages {
-    revealed: BTreeMap<usize, Term>,
-    unrevealed: BTreeMap<usize, Term>,
+struct DisclosedAndUndisclosedTerms {
+    disclosed: BTreeMap<usize, Term>,
+    undisclosed: BTreeMap<usize, Term>,
 }
 
-#[derive(Debug)]
-struct RevealedDocumentAndProof {
-    document: RevealedMessages,
-    proof: RevealedMessages,
-}
+fn get_disclosed_and_undisclosed_terms(
+    disclosed_triples: &BTreeMap<usize, Option<Triple>>,
+    original_triples: &Vec<Triple>,
+) -> Result<DisclosedAndUndisclosedTerms, DeriveProofError> {
+    let mut disclosed_terms = BTreeMap::<usize, Term>::new();
+    let mut undisclosed_terms = BTreeMap::<usize, Term>::new();
 
-fn get_revealed_and_unrevealed_messages(
-    disclosed: &BTreeMap<usize, Option<Triple>>,
-    original: &Vec<Triple>,
-) -> Result<RevealedMessages, DeriveProofError> {
-    let mut revealed = BTreeMap::<usize, Term>::new();
-    let mut unrevealed = BTreeMap::<usize, Term>::new();
-
-    for (i, disclosed_triple) in disclosed {
-        let original = original
+    for (i, disclosed_triple) in disclosed_triples {
+        let original = original_triples
             .get(*i)
             .ok_or(DeriveProofError::DeriveProofValueError)?
             .clone();
         match disclosed_triple {
             Some(triple) => {
                 match &triple.subject {
-                    Subject::BlankNode(_) => unrevealed.insert(3 * i, original.subject.into()),
-                    Subject::NamedNode(n) if is_nym(n) => {
-                        unrevealed.insert(3 * i, original.subject.into())
+                    Subject::BlankNode(_) => {
+                        undisclosed_terms.insert(3 * i, original.subject.into())
                     }
-                    Subject::NamedNode(_) => revealed.insert(3 * i, original.subject.into()),
+                    Subject::NamedNode(n) if is_nym(n) => {
+                        undisclosed_terms.insert(3 * i, original.subject.into())
+                    }
+                    Subject::NamedNode(_) => disclosed_terms.insert(3 * i, original.subject.into()),
                     Subject::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
                 if is_nym(&triple.predicate) {
-                    unrevealed.insert(3 * i + 1, original.predicate.into())
+                    undisclosed_terms.insert(3 * i + 1, original.predicate.into())
                 } else {
-                    revealed.insert(3 * i + 1, original.predicate.into())
+                    disclosed_terms.insert(3 * i + 1, original.predicate.into())
                 };
                 match &triple.object {
-                    Term::BlankNode(_) => unrevealed.insert(3 * i + 2, original.object.into()),
+                    Term::BlankNode(_) => {
+                        undisclosed_terms.insert(3 * i + 2, original.object.into())
+                    }
                     Term::NamedNode(n) if is_nym(n) => {
-                        unrevealed.insert(3 * i + 2, original.object.into())
+                        undisclosed_terms.insert(3 * i + 2, original.object.into())
                     }
                     Term::NamedNode(_) | Term::Literal(_) => {
-                        revealed.insert(3 * i + 2, original.object.into())
+                        disclosed_terms.insert(3 * i + 2, original.object.into())
                     }
                     Term::Triple(_) => return Err(DeriveProofError::DeriveProofValueError),
                 };
             }
             None => {
-                unrevealed.insert(3 * i, original.subject.into());
-                unrevealed.insert(3 * i + 1, original.predicate.into());
-                unrevealed.insert(3 * i + 2, original.object.into());
+                undisclosed_terms.insert(3 * i, original.subject.into());
+                undisclosed_terms.insert(3 * i + 1, original.predicate.into());
+                undisclosed_terms.insert(3 * i + 2, original.object.into());
             }
         }
     }
-    Ok(RevealedMessages {
-        revealed,
-        unrevealed,
+    Ok(DisclosedAndUndisclosedTerms {
+        disclosed: disclosed_terms,
+        undisclosed: undisclosed_terms,
     })
 }
 
