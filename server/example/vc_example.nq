@@ -17,11 +17,11 @@ _:a91b3e <http://example.org/vocab/vaccine> <http://example.org/vaccine/b> <http
 <http://example.org/vcred/00> <https://w3id.org/security#proof> _:vc0.proof <https://zkp-ld.org/.well-known/genid/graph/vc0> .
 ## proof
 _:6b92db <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <https://w3id.org/security#DataIntegrityProof> _:vc0.proof .
-_:6b92db <https://w3id.org/security#cryptosuite> "bbs-term-sig-2023" _:vc0.proof .
+_:6b92db <https://w3id.org/security#cryptosuite> "bbs-termwise-signature-2023" _:vc0.proof .
 _:6b92db <http://purl.org/dc/terms/created> "2023-02-09T09:35:07Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> _:vc0.proof .
 _:6b92db <https://w3id.org/security#proofPurpose> <https://w3id.org/security#assertionMethod> _:vc0.proof .
-_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bbs-bls-key1> _:vc0.proof .
-_:6b92db <https://w3id.org/security#proofValue> "PROOF_VALUE_0" _:vc0.proof .
+_:6b92db <https://w3id.org/security#verificationMethod> <did:example:issuer0#bls12_381-g2-pub001> _:vc0.proof .
+_:6b92db <https://w3id.org/security#proofValue> "ugZveToWB9bUAm3RDFWeORovPDYdIgNWbsquhn334R78TCG86fad_3JiA6yh_f-bsnHL4DdyqBDvkUBbr0eTTUk3vNVI1LRxSfXRqqLng4Qx6SX7tptjtHzjJMkQnolGpiiFfE9k8OhOKcntcJwGSaQ" _:vc0.proof .
 
 # <https://zkp-ld.org/.well-known/genid/graph/vc1>
 ## subject
